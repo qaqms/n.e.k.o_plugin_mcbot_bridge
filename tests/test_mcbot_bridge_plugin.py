@@ -25,14 +25,14 @@ try:
     # directory as a ``mcbot_bridge`` package, because the repository folder is
     # named for the market convention (``n.e.k.o_plugin_mcbot_bridge``) and is
     # not a valid Python identifier.
-    from mcbot_bridge.client import (  # type: ignore[import-not-found]
+    from mcbot_bridge_plugin.client import (  # type: ignore[import-not-found]
         McbotAuthError,
         McbotBridgeError,
         McbotClient,
         McbotUnreachable,
         SseFrame,
     )
-    from mcbot_bridge.service import (  # type: ignore[import-not-found]
+    from mcbot_bridge_plugin.service import (  # type: ignore[import-not-found]
         McbotService,
         normalise_base_url,
         task_looks_like_identifier,

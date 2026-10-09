@@ -146,6 +146,36 @@ claim + dispatch 同步做完即可，完成 cue 由 SSE 的 `done` 事件驱动
 
 ---
 
+## 开发与测试
+
+**测试不需要宿主环境。** 根目录的 `conftest.py` 在检测不到宿主 SDK 时会注入最小桩件，
+并以 `mcbot_bridge_plugin` 为包名加载入口模块：
+
+```bash
+uv run --no-project --python 3.11 --with pytest --with pytest-asyncio --with httpx \
+  python -m pytest tests -q
+```
+
+为什么需要这个 conftest：仓库根就是插件模块（`__init__.py` 是 `plugin.toml` 指的入口），
+而目录名 `n.e.k.o_plugin_mcbot_bridge` 不是合法标识符。若 pytest 的配置放在仓库根，
+它会把根目录当包溯源、去 `import __init__`，此时模块以顶层身份执行、相对 import 直接失败
+——**tests/ 下每个用例都会在 setup 阶段报错**，连什么都不 import 的 `test_smoke.py` 也一样。
+conftest 里 `sys.modules.setdefault("__init__", module)` 那行就是为此：让 pytest 的溯源
+import 命中已加载的模块，而不是把入口当顶层模块重跑一遍。
+
+**要在真实宿主里调试**，把插件复制进宿主源码树后 Reload 该插件：
+
+```powershell
+$dst = "E:\NEKOdm\N.E.K.O\plugin\plugins\mcbot_bridge"
+New-Item -ItemType Directory -Force -Path $dst | Out-Null
+Copy-Item .\__init__.py,.\client.py,.\service.py,.\prompts.py,.\plugin.toml,`
+  .\config.schema.json,.\README.md -Destination $dst -Force
+Copy-Item .\i18n -Destination $dst -Recurse -Force
+```
+
+宿主会为这份副本生成 `plugin.meta.json`（它是构建产物，在源仓库里生成不了——探针要求插件
+处在 `plugin.plugins.<id>` 路径上）。仓内那份副本是临时的，**不要提交到 N.E.K.O. 仓库**。
+
 ## 隐私
 
 任务文本、同伴的回答、以及同伴的反问都是**对话内容**。它们：
