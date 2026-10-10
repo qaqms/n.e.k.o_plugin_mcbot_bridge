@@ -290,7 +290,7 @@
             "pt": "Quantos segundos manter o slot de tarefa aguardando um evento de conclusão. Ao esgotar, o slot é liberado e o usuário é avisado de que não houve resposta, para que uma tarefa cujo evento se perdeu não trave o slot para sempre."
           },
           "minimum": 5.0,
-          "default": 300.0
+          "default": 900.0
         },
         "stream_events": {
           "type": "boolean",

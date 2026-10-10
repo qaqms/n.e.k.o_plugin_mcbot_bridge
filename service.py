@@ -353,6 +353,20 @@ class McbotService:
         while not self._stopping:
             try:
                 await self._refresh_token()
+                if not self._token:
+                    # No credentials yet. mcbot writes bridge.token on the
+                    # first world join, so this is the normal state before a
+                    # world has ever been entered — and also what a wrong
+                    # game_dir looks like. Attempting a request anyway sends an
+                    # empty bearer token, which httpx rejects as a malformed
+                    # header, so the retry loop would otherwise spam a protocol
+                    # error every interval instead of saying what is wrong.
+                    self._log_info(
+                        "no bridge token yet ({}); waiting {:.0f}s",
+                        self._token_error or "unknown", self._reconnect_interval,
+                    )
+                    await asyncio.sleep(self._reconnect_interval)
+                    continue
                 await self._ensure_client()
                 client = self._client
                 if client is not None and self._stream_events:
@@ -961,6 +975,16 @@ class McbotService:
             # Delivery is best-effort; a failure here must not corrupt the
             # event pipeline that called us.
             self._log_warning("cue {} push failed: {}", key, type(exc).__name__)
+            return
+        # Logged on success too: without this the only evidence that a cue left
+        # the plugin lives in the host's log, which makes any "the character
+        # never mentioned it" report impossible to diagnose from this side.
+        # Key/behaviour/size only — the body is conversational content and is
+        # never written to the log.
+        self._log_debug(
+            "cue {} pushed ({} prio={} {} chars)",
+            key, ai_behavior, priority, len(text),
+        )
 
     def error_envelope(self, exc: McbotBridgeError, *, query: str = "") -> Dict[str, Any]:
         """Translate a bridge failure into a model-facing error envelope.
@@ -994,6 +1018,9 @@ class McbotService:
 
     def _log_info(self, msg: str, *args: Any) -> None:
         self._emit("info", msg, *args)
+
+    def _log_debug(self, msg: str, *args: Any) -> None:
+        self._emit("debug", msg, *args)
 
     def _log_warning(self, msg: str, *args: Any) -> None:
         self._emit("warning", msg, *args)

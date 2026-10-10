@@ -81,6 +81,32 @@ mcbot 出于安全考虑只在**回环地址**上开桥，而且**只在 Minecra
 
 ---
 
+## 验证状态（2026-10-10 首次真机）
+
+**全链路已跑通**：对话 LLM → `mcbot_task` → 桥 → 同伴执行 → SSE → cue → 宿主 → 猫娘口播。
+
+真机环境：MC 1.21.11 + Fabric Loader 0.19.5（PCL 版本隔离实例）+ mcbot 0.1.0
++ 打包版 N.E.K.O. 宿主 v0.9.0.1。
+
+已验证：
+
+- 4 个 `@llm_tool` 注册进宿主 `ToolRegistry`（`source=plugin:mcbot_bridge`），对话 LLM 真的会调
+- SSE 帧合 v1.0 契约（每帧带 `contract_version` / `session_id`），含 `ACCEPTED:` 受理回执 + `job_id`
+- **session 变化 → 游标重置**：退世界再进后新桥 id 从 1 重发，插件检出
+  `bridge session changed; previous session state discarded` 并清零游标，新会话事件正常到达宿主。
+  （若未重置，新会话的 1..N 会被旧游标「id 大于」的条件整段**静默吞掉**——不报错，只是没有。）
+- 看门狗在预算耗尽时释放任务槽
+
+**待办（下次优先）**：
+
+1. **cue 刷屏**。`progress` 节流 6s ≈ 10 条/分钟、`state` 完全没有节流、且 `coalesce_key`
+   在被动队列里未见折叠。被动 cue 会攒批，用户下一轮开口时一次性倒进上下文——
+   疑似把用户自己的请求淹掉（表现为「发了指令但没执行」）。**优先治这条。**
+2. `done.status = failed` 的措辞复测。首次真机时她曾把失败任务说成「挖好啦」，
+   但那次跑的是**不含 `CUE_DONE_FAILED` 修复的旧代码**——修复后需要重新验一次。
+3. `task_wait_timeout_seconds` 已由 300 调到 **900**（实测 300s 会在复合任务中途开火、
+   提前释放任务槽），待复测不再提前开火。
+
 ## 已知限制与与兄弟插件的差异
 
 - **没有画面**。mcbot 的桥是 task 级的，不暴露截图，所以**图片进不了视觉上下文**。
