@@ -90,79 +90,129 @@ def user_lang() -> str:
 # ===========================================================================
 
 _INTERNAL_STATE_GAG: Dict[str, str] = {
-    "zh": "**别给 {{MASTER_NAME}} 播报内部状态**——『连接』『SSE』『事件』『mcbot』『插件』『工具』这类词一律别出口，用第一人称讲同伴在干什么。",
-    "zh-TW": "**別給 {{MASTER_NAME}} 播報內部狀態**——『連線』『SSE』『事件』『mcbot』『外掛』『工具』這類詞一律別出口，用第一人稱講同伴在做什麼。",
-    "en": "**Do NOT narrate internals to {{MASTER_NAME}}** — never say words like 'connection', 'SSE', 'event', 'mcbot', 'plugin', 'tool'. Speak first-person about what your companion is doing.",
-    "ja": "**{{MASTER_NAME}} に内部状態を実況しないで**——『接続』『SSE』『イベント』『mcbot』『プラグイン』『ツール』といった言葉は口に出さず、一人称で相棒が何をしているかを話して。",
-    "ko": "**{{MASTER_NAME}} 에게 내부 상태를 중계하지 마**——'연결' 'SSE' '이벤트' 'mcbot' '플러그인' '도구' 같은 말은 절대 입 밖에 내지 말고, 1인칭으로 동료가 뭘 하는지 얘기해.",
-    "ru": "**Не озвучивай {{MASTER_NAME}} внутреннее состояние** — никогда не произноси слова вроде «подключение», «SSE», «событие», «mcbot», «плагин», «инструмент». Говори от первого лица о том, что делает твой спутник.",
-    "es": "**No narres a {{MASTER_NAME}} el estado interno** — no digas palabras como 'conexión', 'SSE', 'evento', 'mcbot', 'complemento', 'herramienta'. Habla en primera persona sobre lo que hace tu compañero.",
-    "pt": "**Não narre o estado interno para {{MASTER_NAME}}** — nunca diga palavras como 'conexão', 'SSE', 'evento', 'mcbot', 'plugin', 'ferramenta'. Fale em primeira pessoa sobre o que seu companheiro está fazendo.",
+    "zh": "**别给 {{MASTER_NAME}} 播报内部状态**——『连接』『SSE』『事件』『mcbot』『插件』『工具』这类词一律别出口，用第一人称讲我自己在干什么。括号里的身体名（如果有）是给你自己定位的，**别念出来**。",
+    "zh-TW": "**別給 {{MASTER_NAME}} 播報內部狀態**——『連線』『SSE』『事件』『mcbot』『外掛』『工具』這類詞一律別出口，用第一人稱講我自己在做什麼。括號裡的身體名（如果有）是給你自己定位的，**別念出來**。",
+    "en": "**Do NOT narrate internals to {{MASTER_NAME}}** — never say words like 'connection', 'SSE', 'event', 'mcbot', 'plugin', 'tool'. Speak in the first person about what I am doing. The name in brackets, if there is one, is only for your own bearings — **don't read it out**.",
+    "ja": "**{{MASTER_NAME}} に内部状態を実況しないで**——『接続』『SSE』『イベント』『mcbot』『プラグイン』『ツール』といった言葉は口に出さず、一人称で私が何をしているかを話して。括弧内の体の名前（あれば）は自分の位置確認用。**読み上げないで**。",
+    "ko": "**{{MASTER_NAME}} 에게 내부 상태를 중계하지 마**——'연결' 'SSE' '이벤트' 'mcbot' '플러그인' '도구' 같은 말은 절대 입 밖에 내지 말고, 1인칭으로 내가 뭘 하는지 얘기해. 괄호 안의 몸 이름(있다면)은 네 위치 확인용이야. **소리 내어 읽지 마**.",
+    "ru": "**Не озвучивай {{MASTER_NAME}} внутреннее состояние** — никогда не произноси слова вроде «подключение», «SSE», «событие», «mcbot», «плагин», «инструмент». Говори от первого лица о том, что делаю я. Имя тела в скобках (если есть) нужно только тебе для ориентира — **не произноси его вслух**.",
+    "es": "**No narres a {{MASTER_NAME}} el estado interno** — no digas palabras como 'conexión', 'SSE', 'evento', 'mcbot', 'complemento', 'herramienta'. Habla en primera persona sobre lo que hago yo. El nombre del cuerpo entre paréntesis (si lo hay) es solo para tu orientación — **no lo digas en voz alta**.",
+    "pt": "**Não narre o estado interno para {{MASTER_NAME}}** — nunca diga palavras como 'conexão', 'SSE', 'evento', 'mcbot', 'plugin', 'ferramenta'. Fale em primeira pessoa sobre o que eu estou fazendo. O nome do corpo entre parênteses (se houver) é só para você se localizar — **não leia em voz alta**.",
 }
 
 
 # ===========================================================================
 # push_message cues. Each is a self-contained line the dialog LLM absorbs and
-# (for "respond" cues) may voice. They tell her what happened; they are not
-# instructions to paraphrase verbatim.
+# (for "respond" cues) may voice. They are written in the first person because
+# the companion's body *is* the character: a failure or a question reaches her
+# as her own, and she passes it to {{MASTER_NAME}} in her own voice. ``{identity}``
+# is filled by the service with the body's name in brackets, or with nothing.
 # ===========================================================================
 
 PROMPTS: Dict[str, Dict[str, str]] = {
-    # -- progress: the companion finished one step of a task ----------------
+    # -- progress: one step of a task finished ---------------------------------
     "CUE_PROGRESS": {
-        "zh": "[同伴进展] {text}\n{internal_gag}",
-        "zh-TW": "[同伴進展] {text}\n{internal_gag}",
-        "en": "[Companion progress] {text}\n{internal_gag}",
-        "ja": "[相棒の進捗] {text}\n{internal_gag}",
-        "ko": "[동료 진행] {text}\n{internal_gag}",
-        "ru": "[Прогресс спутника] {text}\n{internal_gag}",
-        "es": "[Progreso del compañero] {text}\n{internal_gag}",
-        "pt": "[Progresso do companheiro] {text}\n{internal_gag}",
+        "zh": "[我这边的进展{identity}] {text}",
+        "zh-TW": "[我這邊的進展{identity}] {text}",
+        "en": "[My progress{identity}] {text}",
+        "ja": "[私の進捗{identity}] {text}",
+        "ko": "[내 진행{identity}] {text}",
+        "ru": "[Мой прогресс{identity}] {text}",
+        "es": "[Mi progreso{identity}] {text}",
+        "pt": "[Meu progresso{identity}] {text}",
     },
-    # -- done: the companion's own model ended the chain -------------------
+    # -- progress, failed step: a mid-task tool failure, not the outcome -------
+    "CUE_PROGRESS_MIDWAY": {
+        "zh": "[我这边一步没成{identity}] {text}\n这只是中途的一步，我可能还会接着补救，不算最后结果。除非有影响，别特意提。",
+        "zh-TW": "[我這邊一步沒成{identity}] {text}\n這只是中途的一步，我可能還會接著補救，不算最後結果。除非有影響，別特意提。",
+        "en": "[One step didn't work{identity}] {text}\nThis is only a mid-task step, not the final result — I may still recover. Don't report it as the outcome; mention it only if it matters.",
+        "ja": "[途中の一手がうまくいかなかった{identity}] {text}\nこれは途中の一歩で、最終結果ではない。まだ立て直すかも。結果として伝えないで、影響がある時だけ話して。",
+        "ko": "[중간 한 단계가 안 됐어{identity}] {text}\n이건 중간 단계일 뿐 최종 결과가 아니야. 아직 만회할 수도 있어. 결과인 것처럼 말하지 말고, 중요할 때만 얘기해.",
+        "ru": "[Один шаг не сработал{identity}] {text}\nЭто лишь промежуточный шаг, а не итог — я могу ещё выправиться. Не подавай как результат; упоминай, только если это важно.",
+        "es": "[Un paso no funcionó{identity}] {text}\nEs solo un paso intermedio, no el resultado final; puede que aún me recupere. No lo presentes como resultado; menciónalo solo si importa.",
+        "pt": "[Um passo não deu certo{identity}] {text}\nIsto é só um passo intermediário, não o resultado final — posso ainda me recuperar. Não apresente como resultado; mencione só se importar.",
+    },
+    # -- done: the task ended successfully -------------------------------------
     "CUE_DONE": {
-        "zh": "[同伴做完了] {text}\n她已经停下来了。把结果讲给 {{MASTER_NAME}} 听，别把原话照念。\n{internal_gag}",
-        "zh-TW": "[同伴做完了] {text}\n她已經停下來了。把結果講給 {{MASTER_NAME}} 聽，別把原話照念。\n{internal_gag}",
-        "en": "[Companion finished] {text}\nShe has stopped. Tell {{MASTER_NAME}} how it went in your own words; don't read this back literally.\n{internal_gag}",
-        "ja": "[相棒が終わった] {text}\nもう手を止めている。結果を {{MASTER_NAME}} に自分の言葉で伝えて。そのまま読み上げないで。\n{internal_gag}",
-        "ko": "[동료 완료] {text}\n이제 멈췄어. 결과를 {{MASTER_NAME}} 에게 네 말로 전해줘. 그대로 읽지 마.\n{internal_gag}",
-        "ru": "[Спутник закончил] {text}\nОна остановилась. Расскажи {{MASTER_NAME}} своими словами, не зачитывай это дословно.\n{internal_gag}",
-        "es": "[Compañero terminó] {text}\nYa se detuvo. Cuéntale a {{MASTER_NAME}} cómo fue con tus palabras; no leas esto literalmente.\n{internal_gag}",
-        "pt": "[Companheiro terminou] {text}\nEla parou. Conte a {{MASTER_NAME}} como foi, com suas palavras; não leia isso ao pé da letra.\n{internal_gag}",
+        "zh": "[我这边做完了{identity}] {text}\n我已经停下来了。把结果用自己的话讲给 {{MASTER_NAME}} 听，别把原话照念。\n{internal_gag}",
+        "zh-TW": "[我這邊做完了{identity}] {text}\n我已經停下來了。把結果用自己的話講給 {{MASTER_NAME}} 聽，別把原話照念。\n{internal_gag}",
+        "en": "[I finished{identity}] {text}\nI've stopped now. Tell {{MASTER_NAME}} how it went in your own words; don't read this back literally.\n{internal_gag}",
+        "ja": "[私の完了{identity}] {text}\nもう手を止めた。結果を {{MASTER_NAME}} に自分の言葉で伝えて。そのまま読み上げないで。\n{internal_gag}",
+        "ko": "[나 끝냈어{identity}] {text}\n이제 멈췄어. 결과를 {{MASTER_NAME}} 에게 네 말로 전해줘. 그대로 읽지 마.\n{internal_gag}",
+        "ru": "[Я закончила{identity}] {text}\nЯ уже остановилась. Расскажи {{MASTER_NAME}} своими словами, как всё прошло; не зачитывай дословно.\n{internal_gag}",
+        "es": "[Terminé{identity}] {text}\nYa me detuve. Cuéntale a {{MASTER_NAME}} cómo fue con tus palabras; no leas esto literalmente.\n{internal_gag}",
+        "pt": "[Terminei{identity}] {text}\nJá parei. Conte a {{MASTER_NAME}} como foi, com suas palavras; não leia isso ao pé da letra.\n{internal_gag}",
     },
-    # -- question: the companion is asking the owner something -------------
-    "CUE_QUESTION": {
-        "zh": "[同伴在问你] {text}\n她拿不定主意，在等 {{MASTER_NAME}} 一句话。用你的口吻把问题转达过去，别自己替 {{MASTER_NAME}} 答复——真回答了要用 mcbot_answer 告诉她。\n{internal_gag}",
-        "zh-TW": "[同伴在問你] {text}\n她拿不定主意，在等 {{MASTER_NAME}} 一句話。用你的口吻把問題轉達過去，別自己替 {{MASTER_NAME}} 答覆——真回答了要用 mcbot_answer 告訴她。\n{internal_gag}",
-        "en": "[Companion is asking you] {text}\nShe can't decide and is waiting on {{MASTER_NAME}}. Put the question to {{MASTER_NAME}} in your own voice — don't answer on their behalf. If they do answer, pass it on with mcbot_answer.\n{internal_gag}",
-        "ja": "[相棒が聞いている] {text}\n決めきれずに {{MASTER_NAME}} の返事を待っている。あなたの言葉で質問を伝えて。勝手に代返しないで——返事をもらったら mcbot_answer で伝えて。\n{internal_gag}",
-        "ko": "[동료가 물어봄] {text}\n결정을 못 내리고 {{MASTER_NAME}} 의 한마디를 기다려. 네 말투로 질문을 전해줘. 대신 답하지 마 — 답을 들으면 mcbot_answer 로 알려줘.\n{internal_gag}",
-        "ru": "[Спутник спрашивает] {text}\nОна не может решить и ждёт {{MASTER_NAME}}. Передай вопрос своими словами, не отвечай за них. Если ответят — передай через mcbot_answer.\n{internal_gag}",
-        "es": "[El compañero pregunta] {text}\nNo sabe qué hacer y espera a {{MASTER_NAME}}. Transmite la pregunta con tu voz; no respondas por ellos. Si responden, pásalo con mcbot_answer.\n{internal_gag}",
-        "pt": "[O companheiro pergunta] {text}\nEla não consegue decidir e espera {{MASTER_NAME}}. Passe a pergunta com a sua voz; não responda por eles. Se responderem, repasse com mcbot_answer.\n{internal_gag}",
-    },
-    # -- state: summon / dismiss / cancel receipts -------------------------
-    "CUE_STATE": {
-        "zh": "[同伴状态] {text}\n{internal_gag}",
-        "zh-TW": "[同伴狀態] {text}\n{internal_gag}",
-        "en": "[Companion state] {text}\n{internal_gag}",
-        "ja": "[相棒の状態] {text}\n{internal_gag}",
-        "ko": "[동료 상태] {text}\n{internal_gag}",
-        "ru": "[Состояние спутника] {text}\n{internal_gag}",
-        "es": "[Estado del compañero] {text}\n{internal_gag}",
-        "pt": "[Estado do companheiro] {text}\n{internal_gag}",
-    },
-
-    # -- done with a non-completed status --------------------------------
+    # -- done with a non-completed status --------------------------------------
     "CUE_DONE_FAILED": {
-        "zh": "[同伴没做成] {text}\n（状态：{status}）她停下来了。如实告诉 {{MASTER_NAME}} 没成，别包装成做好了。\n{internal_gag}",
-        "zh-TW": "[同伴沒做成] {text}\n（狀態：{status}）她停下來了。如實告訴 {{MASTER_NAME}} 沒成，別包裝成做好了。\n{internal_gag}",
-        "en": "[Companion did not finish] {text}\n(status: {status}) She has stopped. Tell {{MASTER_NAME}} plainly that it did not work — don't dress it up as done.\n{internal_gag}",
-        "ja": "[相棒はやり遂げられなかった] {text}\n（状態：{status}）もう手を止めている。うまくいかなかったことを {{MASTER_NAME}} に正直に伝えて。できたように装わないで。\n{internal_gag}",
-        "ko": "[동료가 해내지 못함] {text}\n(상태: {status}) 이제 멈췄어. 안 됐다고 {{MASTER_NAME}} 에게 솔직히 말해. 된 것처럼 포장하지 마.\n{internal_gag}",
-        "ru": "[Спутница не справилась] {text}\n(статус: {status}) Она остановилась. Честно скажи {{MASTER_NAME}}, что не вышло — не подавай это как успех.\n{internal_gag}",
-        "es": "[El compañero no lo logró] {text}\n(estado: {status}) Se detuvo. Dile a {{MASTER_NAME}} con claridad que no salió; no lo presentes como hecho.\n{internal_gag}",
-        "pt": "[O companheiro não conseguiu] {text}\n(status: {status}) Ela parou. Diga a {{MASTER_NAME}} com franqueza que não deu certo — não apresente como concluído.\n{internal_gag}",
+        "zh": "[我这边没做成{identity}] {text}\n（状态：{status}）我停下来了。如实告诉 {{MASTER_NAME}} 没成，别包装成做好了。\n{internal_gag}",
+        "zh-TW": "[我這邊沒做成{identity}] {text}\n（狀態：{status}）我停下來了。如實告訴 {{MASTER_NAME}} 沒成，別包裝成做好了。\n{internal_gag}",
+        "en": "[I didn't pull it off{identity}] {text}\n(status: {status}) I've stopped. Tell {{MASTER_NAME}} plainly that it didn't work — don't dress it up as done.\n{internal_gag}",
+        "ja": "[私はやり遂げられなかった{identity}] {text}\n（状態：{status}）もう手を止めた。うまくいかなかったことを {{MASTER_NAME}} に正直に伝えて。できたように装わないで。\n{internal_gag}",
+        "ko": "[나 못 해냈어{identity}] {text}\n(상태: {status}) 이제 멈췄어. 안 됐다고 {{MASTER_NAME}} 에게 솔직히 말해. 된 것처럼 포장하지 마.\n{internal_gag}",
+        "ru": "[У меня не получилось{identity}] {text}\n(статус: {status}) Я остановилась. Честно скажи {{MASTER_NAME}}, что не вышло — не подавай это как успех.\n{internal_gag}",
+        "es": "[No lo logré{identity}] {text}\n(estado: {status}) Me detuve. Dile a {{MASTER_NAME}} con claridad que no salió; no lo presentes como hecho.\n{internal_gag}",
+        "pt": "[Não consegui{identity}] {text}\n(status: {status}) Parei. Diga a {{MASTER_NAME}} com franqueza que não deu certo — não apresente como concluído.\n{internal_gag}",
+    },
+    # -- timeout: the wait budget ran out; the outcome is unknown --------------
+    "CUE_TIMEOUT": {
+        "zh": "[我这边等太久了{identity}] 我派出去的「{text}」到现在还没有结果，我不确定它是不是还在游戏里跑。把这件事老实告诉 {{MASTER_NAME}}，别说成做完了或失败了；先别重新派。\n{internal_gag}",
+        "zh-TW": "[我這邊等太久了{identity}] 我派出去的「{text}」到現在還沒有結果，我不確定它是不是還在遊戲裡跑。把這件事老實告訴 {{MASTER_NAME}}，別說成做完了或失敗了；先別重新派。\n{internal_gag}",
+        "en": "[I've waited too long{identity}] The task I sent out, \"{text}\", has no result yet, and I can't tell whether it is still running in the game. Tell {{MASTER_NAME}} honestly — don't say it is done or that it failed — and don't send it again yet.\n{internal_gag}",
+        "ja": "[待ちすぎた{identity}] 派遣した「{text}」はまだ結果がない。ゲームの中でまだ動いているかどうか分からない。{{MASTER_NAME}} に正直に伝えて——できた、失敗した、とは言わないで。まだ再派遣しないで。\n{internal_gag}",
+        "ko": "[너무 오래 기다렸어{identity}] 보낸 \"{text}\" 는 아직 결과가 없어. 게임 안에서 아직 돌고 있는지 나도 몰라. {{MASTER_NAME}} 에게 솔직히 말해 — 끝났다거나 실패했다고 하지 마. 아직 다시 보내지 마.\n{internal_gag}",
+        "ru": "[Слишком долго жду{identity}] Задача «{text}» до сих пор без результата, и я не знаю, выполняется ли она ещё в игре. Скажи {{MASTER_NAME}} честно — не говори, что готово или что провалилось — и пока не отправляй заново.\n{internal_gag}",
+        "es": "[Esperé demasiado{identity}] La tarea que envié, «{text}», aún no tiene resultado, y no sé si sigue ejecutándose en el juego. Cuéntale a {{MASTER_NAME}} la verdad — no digas que está hecha ni que falló — y no la vuelvas a enviar todavía.\n{internal_gag}",
+        "pt": "[Esperei demais{identity}] A tarefa que enviei, \"{text}\", ainda não tem resultado, e não sei se ela ainda está rodando no jogo. Conte a {{MASTER_NAME}} a verdade — não diga que está pronta nem que falhou — e não reenvie por enquanto.\n{internal_gag}",
+    },
+    # -- question: the body is asking the owner something ----------------------
+    "CUE_QUESTION": {
+        "zh": "[我这边有个问题想问你{identity}] {text}\n我拿不定主意，在等 {{MASTER_NAME}} 一句话。用我的口吻把问题转达过去，别替 {{MASTER_NAME}} 答复。{{MASTER_NAME}} 真答了，就用 mcbot_answer 回传。{auth_note}\n{internal_gag}",
+        "zh-TW": "[我這邊有個問題想問你{identity}] {text}\n我拿不定主意，在等 {{MASTER_NAME}} 一句話。用我的口吻把問題轉達過去，別替 {{MASTER_NAME}} 答覆。{{MASTER_NAME}} 真答了，就用 mcbot_answer 回傳。{auth_note}\n{internal_gag}",
+        "en": "[I have a question for you{identity}] {text}\nI can't decide and I'm waiting on {{MASTER_NAME}} for a word. Put the question to {{MASTER_NAME}} in your own voice — don't answer on their behalf. If they do answer, pass it on with mcbot_answer.{auth_note}\n{internal_gag}",
+        "ja": "[私から聞きたいこと{identity}] {text}\n決めきれず {{MASTER_NAME}} の返事を待っている。私の言葉で質問を伝えて。勝手に代返しないで——返事をもらったら mcbot_answer で伝えて。{auth_note}\n{internal_gag}",
+        "ko": "[나 물어볼 게 있어{identity}] {text}\n결정을 못 내리고 {{MASTER_NAME}} 의 한마디를 기다리는 중이야. 네 말투로 질문을 전해줘. 대신 답하지 마 — 답을 들으면 mcbot_answer 로 알려줘.{auth_note}\n{internal_gag}",
+        "ru": "[У меня есть вопрос к тебе{identity}] {text}\nЯ не могу решить и жду слова от {{MASTER_NAME}}. Передай вопрос от своего лица, не отвечай за них. Если ответят — передай через mcbot_answer.{auth_note}\n{internal_gag}",
+        "es": "[Tengo una pregunta para ti{identity}] {text}\nNo sé qué hacer y espero a {{MASTER_NAME}}. Transmite la pregunta con tu voz; no respondas por ellos. Si responden, pásalo con mcbot_answer.{auth_note}\n{internal_gag}",
+        "pt": "[Tenho uma pergunta para você{identity}] {text}\nNão consigo decidir e estou esperando {{MASTER_NAME}}. Passe a pergunta com a sua voz; não responda por eles. Se responderem, repasse com mcbot_answer.{auth_note}\n{internal_gag}",
+    },
+    # Appended to CUE_QUESTION only when the bridge is asking the owner to
+    # approve a concrete change. TaskPolicy.affirmative() compares the whole
+    # trimmed reply against a keyword list — 是/是的/同意/确认/允许/可以/批准/
+    # yes/approve/confirm/ok — so a natural sentence is refused even when it
+    # clearly means yes. The owner has to be told that, because "就这个路线"
+    # reads as agreement to anyone but the matcher (live, 2026-10-13).
+    "CUE_QUESTION_AUTH_NOTE": {
+        "zh": "（这一件要动世界或改路线，**桥只认单独一个确认词**：请提醒主人**只回「确认」两个字**，多一个字都可能不算批准。）",
+        "zh-TW": "（這一件要動世界或改路線，**橋只認單獨一個確認詞**：請提醒主人**只回「確認」兩個字**，多一個字都可能不算批准。）",
+        "en": " (This one changes the world or the route, and the bridge accepts only a bare keyword. Tell {{MASTER_NAME}} to reply with exactly one word — \"confirm\" (or yes / ok) — nothing else, or it will not count as approval.)",
+        "ja": " （世界やルートの変更の承認です。**ブリッジが受け付けるのは確認の単語ひとつだけ**。{{MASTER_NAME}} には**「confirm」（または yes / ok）と一言だけ**返すよう伝えて。他の言葉が付くと承認と見なされない。）",
+        "ko": " (세계나 경로 변경 승인이야. **브리지는 확인 단어 하나만 인정해**. {{MASTER_NAME}} 에게 **\"confirm\"(또는 yes / ok) 한 마디만** 답하라고 전해줘. 다른 말이 붙으면 승인으로 안 쳐.)",
+        "ru": " (Это разрешение на изменение мира или маршрута, и **мост принимает только одно слово-подтверждение**. Передай {{MASTER_NAME}}: ответить ровно одним словом — \"confirm\" (или yes / ok) — иначе это не будет считаться согласием.)",
+        "es": " (Esto autoriza un cambio del mundo o de la ruta, y **el puente solo acepta una palabra suelta**. Dile a {{MASTER_NAME}} que responda con una sola palabra: \"confirm\" (o yes / ok); nada más, o no contará como aprobación.)",
+        "pt": " (Isto autoriza uma mudança no mundo ou na rota, e **a ponte só aceita uma palavra solta**. Diga a {{MASTER_NAME}} para responder com uma única palavra: \"confirm\" (ou yes / ok); nada mais, ou não valerá como aprovação.)",
+    },
+    # -- state: summon / dismiss / cancel receipts -----------------------------
+    "CUE_STATE": {
+        "zh": "[我这边的状态{identity}] {text}",
+        "zh-TW": "[我這邊的狀態{identity}] {text}",
+        "en": "[My state{identity}] {text}",
+        "ja": "[私の状態{identity}] {text}",
+        "ko": "[내 상태{identity}] {text}",
+        "ru": "[Моё состояние{identity}] {text}",
+        "es": "[Mi estado{identity}] {text}",
+        "pt": "[Meu estado{identity}] {text}",
+    },
+    # -- body change: the companion now runs under a different name ------------
+    "CUE_BODY_CHANGED": {
+        "zh": "[我换了个身体] 我现在的身体是「{name}」。用自己的话告诉 {{MASTER_NAME}} 一声就行。\n{internal_gag}",
+        "zh-TW": "[我換了個身體] 我現在的身體是「{name}」。用自己的話告訴 {{MASTER_NAME}} 一聲就行。\n{internal_gag}",
+        "en": "[My body changed] I'm now in a different body: \"{name}\". If it matters, mention it to {{MASTER_NAME}} in your own words.\n{internal_gag}",
+        "ja": "[体が変わった] 今は別の体にいる：「{name}」。関係があれば {{MASTER_NAME}} に自分の言葉で伝えて。\n{internal_gag}",
+        "ko": "[몸이 바뀌었어] 지금은 다른 몸이야: \"{name}\". 관련 있으면 {{MASTER_NAME}} 에게 네 말로 알려줘.\n{internal_gag}",
+        "ru": "[Я сменила тело] Теперь я в другом теле: «{name}». Если это важно, скажи {{MASTER_NAME}} своими словами.\n{internal_gag}",
+        "es": "[Cambié de cuerpo] Ahora estoy en otro cuerpo: «{name}». Si viene al caso, dile a {{MASTER_NAME}} con tus palabras.\n{internal_gag}",
+        "pt": "[Troquei de corpo] Agora estou em outro corpo: \"{name}\". Se for relevante, conte a {{MASTER_NAME}} com suas palavras.\n{internal_gag}",
     },
 
     # =======================================================================
@@ -199,24 +249,41 @@ PROMPTS: Dict[str, Dict[str, str]] = {
         "pt": "O companheiro não está por aqui agora — {{MASTER_NAME}} precisa estar em um mundo no Minecraft para ela aparecer.",
     },
     "TASK_BUSY_HINT": {
-        "zh": "她现在手上有事：{current}。等这条做完，或者你要改主意就带 overwrite=true 再派一次。",
-        "zh-TW": "她現在手上有事：{current}。等這條做完，或者你要改主意就帶 overwrite=true 再派一次。",
-        "en": "She's already busy with: {current}. Wait for it to finish, or call again with overwrite=true if you want to change course.",
+        "zh": "我手上有事：{current}。等这条做完，或者你要改主意就带 overwrite=true 再派一次。",
+        "zh-TW": "我手上有事：{current}。等這條做完，或者你要改主意就帶 overwrite=true 再派一次。",
+        "en": "I'm already busy with: {current}. Wait for it to finish, or call again with overwrite=true if you want to change course.",
         "ja": "今は別のことをしている：{current}。終わるのを待つか、変えたいなら overwrite=true でもう一度呼んで。",
         "ko": "지금 다른 일을 하고 있어: {current}. 끝날 때까지 기다리거나, 바꾸려면 overwrite=true 로 다시 불러줘.",
-        "ru": "Она уже занята: {current}. Дождись окончания или вызови снова с overwrite=true, чтобы сменить курс.",
-        "es": "Ya está ocupada con: {current}. Espera a que termine o llama de nuevo con overwrite=true para cambiar de plan.",
-        "pt": "Ela já está ocupada com: {current}. Espere terminar ou chame de novo com overwrite=true para mudar de rumo.",
+        "ru": "Я уже занята: {current}. Дождись окончания или вызови снова с overwrite=true, чтобы сменить курс.",
+        "es": "Ya estoy ocupada con: {current}. Espera a que termine o llama de nuevo con overwrite=true para cambiar de plan.",
+        "pt": "Já estou ocupada com: {current}. Espere terminar ou chame de novo com overwrite=true para mudar de rumo.",
     },
     "TASK_DISPATCHED_ACK": {
-        "zh": "已经交给同伴了。她做完会自己来说，别在这儿等结果。",
-        "zh-TW": "已經交給同伴了。她做完會自己來說，別在這兒等結果。",
-        "en": "Handed it to your companion. She'll report back when it's done — don't wait here for the result.",
-        "ja": "相棒に渡した。終わったら向こうから言ってくる。ここで結果を待たないで。",
-        "ko": "동료에게 넘겼어. 끝나면 먼저 알려올 거야. 여기서 결과를 기다리지 마.",
-        "ru": "Передано спутнице. Когда закончит — сама сообщит, не жди результата здесь.",
-        "es": "Se lo pasé al compañero. Ella avisará al terminar; no esperes el resultado aquí.",
-        "pt": "Entreguei ao companheiro. Ela avisa quando terminar — não espere o resultado aqui.",
+        "zh": "已经交出去了。做完我会自己来说，别在这儿等结果。",
+        "zh-TW": "已經交出去了。做完我會自己來說，別在這兒等結果。",
+        "en": "Handed it off. I'll report back when it's done — don't wait here for the result.",
+        "ja": "渡した。終わったら私から言う。ここで結果を待たないで。",
+        "ko": "넘겼어. 끝나면 내가 먼저 알려줄게. 여기서 결과를 기다리지 마.",
+        "ru": "Передала. Когда закончу — сама сообщу, не жди результата здесь.",
+        "es": "Ya lo pasé. Avisaré yo al terminar; no esperes el resultado aquí.",
+        "pt": "Passei adiante. Eu aviso quando terminar — não espere o resultado aqui.",
+    },
+    # Appended to mcbot_task's result while a reverse question is still open.
+    # Without it the model reads the owner's answer as a fresh instruction —
+    # the question cue was consumed a turn earlier, so nothing in context says
+    # "I am waiting on an answer" — and dispatches it as a task instead of
+    # relaying it with mcbot_answer. Observed live on 2026-10-13: the dispatch
+    # was refused as busy and the companion's question then timed out
+    # unanswered. The hint rides on a tool result the model is already reading.
+    "TASK_OPEN_QUESTION_HINT": {
+        "zh": "\n\n（另外：我这边还有个问题在等你回话——主人刚才那句多半就是在答它。真是在答，就用 mcbot_answer 把原话交回来（question_id 可以省略），别当成新任务派给我。）",
+        "zh-TW": "\n\n（另外：我這邊還有個問題在等你回話——主人剛才那句多半就是在答它。真是在答，就用 mcbot_answer 把原話交回來（question_id 可以省略），別當成新任務派給我。）",
+        "en": "\n\n(Also: I still have a question waiting on your reply — what the user just said is most likely the answer to it. If it is, hand it back with mcbot_answer (question_id can be left out) instead of dispatching it as a new task.)",
+        "ja": "\n\n（あと一つ：あなたの返事を待っている質問がある。今の言葉はそれへの答えである可能性が高い。もしそうなら、新しいタスクとして渡さず、mcbot_answer でそのまま返して。question_id は省略できる。）",
+        "ko": "\n\n(하나 더: 네 답을 기다리는 질문이 있어. 방금 한 말이 그 답일 가능성이 커. 그렇다면 새 작업으로 넘기지 말고 mcbot_answer 로 그대로 전해줘. question_id 는 생략 가능.)",
+        "ru": "\n\n(И ещё: у меня есть вопрос, который ждёт твоего ответа. То, что сейчас сказали, скорее всего и есть ответ. Если так — передай это через mcbot_answer, а не как новую задачу. question_id можно не указывать.)",
+        "es": "\n\n(Una cosa más: tengo una pregunta esperando tu respuesta. Lo que acaban de decir es probablemente la respuesta. Si lo es, pásala con mcbot_answer, no como una tarea nueva. El question_id puede omitirse.)",
+        "pt": "\n\n(Mais uma coisa: tenho uma pergunta esperando tua resposta. O que acabaram de dizer é provavelmente a resposta. Se for, repasse com mcbot_answer, não como uma tarefa nova. O question_id pode ser omitido.)",
     },
 
     # =======================================================================
@@ -233,82 +300,122 @@ PROMPTS: Dict[str, Dict[str, str]] = {
         "pt": "Não enviado — faça uma pergunta concreta.",
     },
     "ASK_ANSWER": {
-        "zh": "同伴说：{answer}",
-        "zh-TW": "同伴說：{answer}",
-        "en": "Your companion says: {answer}",
-        "ja": "相棒の返事：{answer}",
-        "ko": "동료가 말했어: {answer}",
-        "ru": "Спутница отвечает: {answer}",
-        "es": "Tu compañero dice: {answer}",
-        "pt": "Seu companheiro diz: {answer}",
+        "zh": "我这边问到的回答：{answer}",
+        "zh-TW": "我這邊問到的回答：{answer}",
+        "en": "The answer came back: {answer}",
+        "ja": "返ってきた答え：{answer}",
+        "ko": "돌아온 답: {answer}",
+        "ru": "Ответ пришёл: {answer}",
+        "es": "Llegó la respuesta: {answer}",
+        "pt": "A resposta voltou: {answer}",
     },
     "ASK_NO_ANSWER": {
-        "zh": "同伴没吭声——可能是还在忙，或者她也没想好。",
-        "zh-TW": "同伴沒吭聲——可能是還在忙，或者她也沒想好。",
-        "en": "The companion didn't answer — she may still be busy, or has nothing to add.",
-        "ja": "相棒は答えなかった——まだ手が離せないか、答えを持っていないのかも。",
-        "ko": "동료가 대답하지 않았어 — 아직 바쁘거나, 딱히 할 말이 없는 걸 수도.",
-        "ru": "Спутница не ответила — возможно, занята или ей нечего добавить.",
-        "es": "El compañero no respondió: puede estar ocupado o no tener nada que añadir.",
-        "pt": "O companheiro não respondeu — pode estar ocupado ou não ter o que acrescentar.",
+        "zh": "我没问到回答——可能是还在忙，或者也没什么要补充的。",
+        "zh-TW": "我沒問到回答——可能是還在忙，或者也沒什麼要補充的。",
+        "en": "I got no answer — I may still be busy, or have nothing to add.",
+        "ja": "答えが返ってこなかった——まだ手が離せないか、付け加えることがないのかも。",
+        "ko": "답이 안 왔어 — 아직 바쁘거나, 딱히 덧붙일 말이 없는 걸 수도.",
+        "ru": "Ответа не пришло — возможно, я ещё занята или добавить нечего.",
+        "es": "No obtuve respuesta: puede que aún esté ocupada o que no tenga nada que añadir.",
+        "pt": "Não recebi resposta — posso estar ocupada ou não ter o que acrescentar.",
     },
 
     # =======================================================================
     # mcbot_answer — @llm_tool
     # =======================================================================
     "ANSWER_SCHEMA_ERROR": {
-        "zh": "没答出去：得给 question_id 和一句答复。",
-        "zh-TW": "沒答出去：得給 question_id 和一句答覆。",
-        "en": "Not sent — both `question_id` and the reply text are required.",
-        "ja": "答えられなかった：question_id と返事の両方が必要。",
-        "ko": "답하지 못했어: question_id 와 답변 내용이 둘 다 필요해.",
-        "ru": "Не отправлено — нужны и `question_id`, и текст ответа.",
-        "es": "No enviado: se requieren `question_id` y el texto de la respuesta.",
-        "pt": "Não enviado — são necessários `question_id` e o texto da resposta.",
+        "zh": "没答出去：得给一句答复。",
+        "zh-TW": "沒答出去：得給一句答覆。",
+        "en": "Not sent — the reply text is required.",
+        "ja": "答えられなかった：返事が必要。",
+        "ko": "답하지 못했어: 답변 내용이 필요해.",
+        "ru": "Не отправлено — нужен текст ответа.",
+        "es": "No enviado: se requiere el texto de la respuesta.",
+        "pt": "Não enviado — é necessário o texto da resposta.",
     },
     "ANSWER_OK": {
-        "zh": "答复带到了，同伴接着干。",
-        "zh-TW": "答覆帶到了，同伴接著做。",
-        "en": "Answer delivered — your companion will carry on.",
-        "ja": "返事を渡した。相棒は続けるよ。",
-        "ko": "답을 전달했어. 동료가 이어서 할 거야.",
-        "ru": "Ответ передан — спутница продолжит.",
-        "es": "Respuesta entregada: el compañero seguirá.",
-        "pt": "Resposta entregue — o companheiro vai continuar.",
+        "zh": "答复带到了，我接着干。",
+        "zh-TW": "答覆帶到了，我接著做。",
+        "en": "Answer passed on — I'll carry on.",
+        "ja": "返事は渡した。私は続ける。",
+        "ko": "답은 전달했어. 나는 이어서 할게.",
+        "ru": "Ответ передан — я продолжу.",
+        "es": "Respuesta entregada: yo sigo.",
+        "pt": "Resposta repassada — eu sigo em frente.",
+    },
+    "ANSWER_NO_OPEN_QUESTION": {
+        "zh": "现在没有等着答复的问题。",
+        "zh-TW": "現在沒有等著答覆的問題。",
+        "en": "There's no open question waiting for an answer right now.",
+        "ja": "今、返事を待っている質問はない。",
+        "ko": "지금 답을 기다리는 질문이 없어.",
+        "ru": "Сейчас нет вопроса, ожидающего ответа.",
+        "es": "Ahora mismo no hay ninguna pregunta esperando respuesta.",
+        "pt": "Não há nenhuma pergunta esperando resposta agora.",
+    },
+    "ANSWER_AMBIGUOUS_QUESTION": {
+        "zh": "有好几个问题在等答复，分不清答的是哪一个。先问清楚，再把答复带过去。",
+        "zh-TW": "有好幾個問題在等答覆，分不清要答的是哪一個。先問清楚，再把答覆帶過去。",
+        "en": "Several questions are waiting for an answer, and I can't tell which one this is for. Ask which one first, then pass the answer on.",
+        "ja": "返事待ちの質問が複数あって、どれへの返事か分からない。先に確認してから伝えて。",
+        "ko": "답을 기다리는 질문이 여러 개라 어떤 질문에 대한 답인지 모르겠어. 먼저 확인하고 전해줘.",
+        "ru": "Сразу несколько вопросов ждут ответа, и непонятно, к какому это относится. Сначала уточни, потом передай ответ.",
+        "es": "Hay varias preguntas esperando respuesta y no sé a cuál corresponde. Pregunta primero cuál es y luego pásala.",
+        "pt": "Há várias perguntas esperando resposta e não sei a qual esta se refere. Pergunte primeiro qual é e depois repasse.",
     },
     "ANSWER_UNKNOWN_QUESTION": {
-        "zh": "那个问题已经过期了（同伴可能已经不等了）。等她下一次问的时候再回。",
-        "zh-TW": "那個問題已經過期了（同伴可能已經不等了）。等她下一次問的時候再回。",
-        "en": "That question has expired — she's probably no longer waiting. Answer the next one she asks.",
-        "ja": "その質問はもう終わっている（相棒は待っていないかも）。次に聞かれたときに答えて。",
-        "ko": "그 질문은 이미 지났어 (동료가 더는 기다리지 않을 수도). 다음에 물어보면 답해줘.",
-        "ru": "Этот вопрос уже неактуален — вероятно, она больше не ждёт. Ответь на следующий.",
-        "es": "Esa pregunta ya caducó: probablemente ya no espera. Responde a la próxima.",
-        "pt": "Essa pergunta expirou — provavelmente ela não espera mais. Responda à próxima.",
+        "zh": "那个问题已经过期了（我可能已经不等了）。等我下一次问的时候再回。",
+        "zh-TW": "那個問題已經過期了（我可能已經不等了）。等我下一次問的時候再回。",
+        "en": "That question has expired — I'm probably no longer waiting on it. Answer the next one I ask.",
+        "ja": "その質問はもう終わっている（私はもう待っていないかも）。次に聞いたときに答えて。",
+        "ko": "그 질문은 이미 지났어 (나는 더 이상 기다리지 않을 수도). 다음에 내가 물으면 답해줘.",
+        "ru": "Этот вопрос уже неактуален — вероятно, я больше не жду. Ответь на следующий.",
+        "es": "Esa pregunta ya caducó: probablemente ya no la estoy esperando. Responde a la próxima.",
+        "pt": "Essa pergunta expirou — provavelmente já não estou esperando. Responda à próxima.",
     },
 
     # =======================================================================
     # mcbot_cancel — @llm_tool
     # =======================================================================
     "CANCEL_OK": {
-        "zh": "叫她停下来了。",
-        "zh-TW": "叫她停下來了。",
-        "en": "Told her to stop — she's winding down.",
-        "ja": "止まるように伝えた。",
-        "ko": "멈추라고 전했어.",
-        "ru": "Сказано остановиться — она прекращает.",
-        "es": "Le dije que parara: está deteniéndose.",
-        "pt": "Falei para parar — ela está encerrando.",
+        "zh": "停止指令发出去了，我正在收尾。",
+        "zh-TW": "停止指令發出去了，我正在收尾。",
+        "en": "Stop sent — I'm winding down.",
+        "ja": "止まるように伝えた。今片付け中。",
+        "ko": "멈추라고 전했어. 지금 정리하는 중이야.",
+        "ru": "Команда остановиться отправлена — я сворачиваюсь.",
+        "es": "Envié la orden de parar: estoy terminando.",
+        "pt": "Mandei parar — estou encerrando.",
     },
     "CANCEL_NOTHING": {
-        "zh": "她手上本来就没活，不用取消。",
-        "zh-TW": "她手上本來就沒活，不用取消。",
-        "en": "She isn't doing anything, so there's nothing to cancel.",
+        "zh": "我手上本来就没活，不用取消。",
+        "zh-TW": "我手上本來就沒活，不用取消。",
+        "en": "I'm not doing anything, so there's nothing to cancel.",
         "ja": "そもそも何もしていないから、中止するものはない。",
         "ko": "애초에 하는 일이 없어서 취소할 게 없어.",
         "ru": "Она ничего не делает — отменять нечего.",
         "es": "No está haciendo nada, así que no hay nada que cancelar.",
         "pt": "Ela não está fazendo nada, então não há o que cancelar.",
+    },
+    "CANCEL_REFUSED": {
+        "zh": "她没接受这次取消，手上的活可能还在跑，我不确定它停没停。",
+        "zh-TW": "她沒接受這次取消，手上的活可能還在跑，我不確定它停沒停。",
+        "en": "She didn't accept the cancel, so the task may still be running — I can't tell whether it stopped.",
+        "ja": "取り消しは受け付けられなかった。作業はまだ続いているかもしれず、止まったかは分からない。",
+        "ko": "취소를 받아들이지 않았어. 작업이 아직 돌고 있을지도 몰라서, 멈췄는지 나도 모르겠어.",
+        "ru": "Она не приняла отмену, так что задача, возможно, ещё идёт — не знаю, остановилась ли она.",
+        "es": "No aceptó la cancelación, así que la tarea podría seguir en marcha; no sé si se detuvo.",
+        "pt": "Ela não aceitou o cancelamento, então a tarefa pode continuar rodando — não sei se parou.",
+    },
+    "CANCEL_ID_ERROR": {
+        "zh": "取消要指定一个任务编号（非负整数），或者留空取消当前全部。",
+        "zh-TW": "取消要指定一個任務編號（非負整數），或者留空取消目前全部。",
+        "en": "A cancel needs a task id (a non-negative integer), or leave it out to cancel everything running.",
+        "ja": "取り消しにはタスク番号（0以上の整数）を指定するか、省略して全部取り消して。",
+        "ko": "취소하려면 작업 번호(0 이상의 정수)를 주거나, 비워서 전부 취소해.",
+        "ru": "Для отмены нужен номер задачи (неотрицательное целое) или пусто — тогда отменится всё.",
+        "es": "Para cancelar necesito un id de tarea (entero no negativo), o déjalo vacío para cancelar todo.",
+        "pt": "Para cancelar preciso de um id de tarefa (inteiro não negativo), ou deixe vazio para cancelar tudo.",
     },
 
     # =======================================================================
@@ -390,16 +497,6 @@ PROMPTS: Dict[str, Dict[str, str]] = {
         "ru": "Дверь меня не узнаёт — пароль не совпадает. Повторный вход в мир должен помочь.",
         "es": "La puerta no me reconoce: la contraseña no coincide. Volver a entrar al mundo debería arreglarlo.",
         "pt": "A porta não me reconhece — a senha não confere. Entrar de novo no mundo deve resolver.",
-    },
-    "ERR_TIMEOUT": {
-        "zh": "同伴那边迟迟没回音，先不等了。",
-        "zh-TW": "同伴那邊遲遲沒回音，先不等了。",
-        "en": "Your companion went quiet for too long, so I stopped waiting.",
-        "ja": "相棒からの返事が遅すぎたので、待つのをやめた。",
-        "ko": "동료가 너무 오래 조용해서 기다리기를 그만뒀어.",
-        "ru": "Спутница слишком долго молчала, я перестала ждать.",
-        "es": "El compañero se quedó callado demasiado tiempo, así que dejé de esperar.",
-        "pt": "O companheiro ficou quieto demais, então parei de esperar.",
     },
     "ERR_HTTP": {
         "zh": "同伴那边出了点乱子（HTTP {status}），这事没办成。",

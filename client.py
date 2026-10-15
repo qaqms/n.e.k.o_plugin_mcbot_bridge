@@ -207,6 +207,17 @@ class McbotClient:
         """
         self._last_event_id = ""
 
+    def restore_cursor(self, event_id: Any) -> None:
+        """Re-seat the SSE cursor from outside this process.
+
+        Only valid for a session the caller has confirmed is unchanged — see
+        :meth:`reset_cursor` for what a stale id costs. Without this, every
+        plugin restart arrives with no ``Last-Event-ID`` and the bridge replays
+        its entire ring buffer as if those events had just happened.
+        """
+        if isinstance(event_id, str) and event_id:
+            self._last_event_id = event_id
+
     # ------------------------------------------------------------------
     # REST
     # ------------------------------------------------------------------
@@ -269,6 +280,7 @@ class McbotClient:
             # than this id, so a reconnect does not lose the events that
             # arrived while we were away.
             headers["Last-Event-ID"] = self._last_event_id
+        cursor_blocked = False
         try:
             timeout = httpx.Timeout(self.http_timeout, read=SSE_READ_TIMEOUT_S)
             async with http.stream(
@@ -292,10 +304,11 @@ class McbotClient:
                     try:
                         await on_event(frame)
                     except Exception as exc:
-                        # A misbehaving consumer must not tear down the
-                        # stream — log and keep pumping. The cursor is left
-                        # where it was, so the frame is replayed after a
-                        # reconnect rather than silently dropped.
+                        # A misbehaving consumer must not tear down the stream:
+                        # log and keep pumping. The cursor stops here for the
+                        # rest of this connection, so a reconnect replays from
+                        # the failed frame instead of skipping past it.
+                        cursor_blocked = True
                         self._log_error(
                             "event handler failed for {!r}: {}: {}",
                             frame.event, type(exc).__name__, exc,
@@ -304,7 +317,7 @@ class McbotClient:
                     # Advance only after the frame is fully handled: v1.0 asks
                     # the connector to move the cursor on success, not on
                     # receipt, so a mid-handling failure loses nothing.
-                    if frame.id:
+                    if frame.id and not cursor_blocked:
                         self._last_event_id = frame.id
         except httpx.HTTPStatusError as exc:
             self._last_error = f"HTTP {exc.response.status_code}"

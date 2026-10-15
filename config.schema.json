@@ -344,6 +344,33 @@
           },
           "minimum": 1.0,
           "default": 6.0
+        },
+        "state_min_interval_seconds": {
+          "type": "number",
+          "title": "State throttle",
+          "description": "Shortest gap in seconds between state updates forwarded to the character. The companion reports her state often, and without a floor those updates crowd out the conversation.",
+          "x-title-i18n": {
+            "zh-CN": "状态节流",
+            "zh-TW": "狀態節流",
+            "en": "State throttle",
+            "ja": "状態のスロットル",
+            "ko": "상태 조절",
+            "ru": "Ограничение частоты состояния",
+            "es": "Limitador de estado",
+            "pt": "Limitador de estado"
+          },
+          "x-description-i18n": {
+            "zh-CN": "两次状态播报之间的最短间隔（秒）。同伴的状态变化很频繁，不设闸会挤占对话上下文。",
+            "zh-TW": "兩次狀態播報之間的最短間隔（秒）。同伴的狀態變化很頻繁，不設閘會擠佔對話上下文。",
+            "en": "Shortest gap in seconds between state updates forwarded to the character. The companion reports her state often, and without a floor those updates crowd out the conversation.",
+            "ja": "状態を知らせる間隔の最小秒数。相棒の状態は頻繁に変わるため、下限がないと会話を圧迫します。",
+            "ko": "상태 정보를 전달하는 최소 간격(초)입니다. 동료의 상태는 자주 바뀌므로 하한이 없으면 대화를 밀어냅니다.",
+            "ru": "Минимальный интервал в секундах между обновлениями состояния. Спутница часто сообщает о своём состоянии, и без нижней границы эти обновления вытесняют разговор.",
+            "es": "Intervalo mínimo en segundos entre actualizaciones de estado. El compañero informa a menudo de su estado y, sin un mínimo, esas actualizaciones desplazan la conversación.",
+            "pt": "Intervalo mínimo em segundos entre atualizações de estado. O companheiro informa o estado com frequência e, sem um piso, essas atualizações atropelam a conversa."
+          },
+          "minimum": 1.0,
+          "default": 6.0
         }
       }
     }

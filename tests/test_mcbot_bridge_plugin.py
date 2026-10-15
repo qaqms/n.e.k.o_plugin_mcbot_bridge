@@ -14,8 +14,10 @@ way the sibling ``test_game_agent_minecraft_plugin.py`` does.
 from __future__ import annotations
 
 import asyncio
+import itertools
 import json
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -34,6 +36,7 @@ try:
     )
     from mcbot_bridge_plugin.service import (  # type: ignore[import-not-found]
         McbotService,
+        is_authorization_question,
         normalise_base_url,
         task_looks_like_identifier,
     )
@@ -52,6 +55,7 @@ except ModuleNotFoundError:  # pragma: no cover - depends on checkout layout
     )
     from plugin.plugins.mcbot_bridge.service import (  # noqa: E402
         McbotService,
+        is_authorization_question,
         normalise_base_url,
         task_looks_like_identifier,
     )
@@ -88,6 +92,9 @@ class _FakeClient:
         self.last_error = ""
         self.session_id = ""
         self.cursor_resets = 0
+        self.last_event_id = ""
+        self.restored_cursors: list[str] = []
+        self.cancel_result: dict = {"ok": True}
 
     # -- transport surface the service uses -------------------------------
 
@@ -115,7 +122,7 @@ class _FakeClient:
     async def cancel_task(self, task_id=None) -> dict:
         self.calls.append(("cancel_task", task_id))
         self._maybe_raise("cancel_task")
-        return {"ok": True}
+        return self.cancel_result
 
     async def ask(self, text: str) -> dict:
         self.calls.append(("ask", text))
@@ -138,6 +145,12 @@ class _FakeClient:
 
     def reset_cursor(self) -> None:
         self.cursor_resets += 1
+        self.last_event_id = ""
+
+    def restore_cursor(self, event_id) -> None:
+        if isinstance(event_id, str) and event_id:
+            self.last_event_id = event_id
+            self.restored_cursors.append(event_id)
 
     def _maybe_raise(self, method: str) -> None:
         exc = self._raise_on.get(method)
@@ -151,7 +164,11 @@ def _make_service(*, push_calls: list | None = None) -> tuple[McbotService, list
     def fake_push(**kwargs):
         captured.append(kwargs)
 
-    return McbotService(logger=None, push_message_fn=fake_push), captured
+    service = McbotService(logger=None, push_message_fn=fake_push)
+    # Tests never touch the real runtime state directory; the cursor tests opt
+    # back in with their own tmp path.
+    service._cursor_path = None
+    return service, captured
 
 
 async def _settle() -> None:
@@ -162,6 +179,14 @@ async def _settle() -> None:
 
 def _frame(event: str, **payload) -> SseFrame:
     return SseFrame(event=event, data=json.dumps(payload), id="1")
+
+
+_FRAME_SEQ = itertools.count(10_000)
+
+
+def _fresh(event: str, **payload) -> SseFrame:
+    """Like ``_frame`` but with a unique id, so replays are not deduped."""
+    return SseFrame(event=event, data=json.dumps(payload), id=str(next(_FRAME_SEQ)))
 
 
 # ---------------------------------------------------------------------------
@@ -258,14 +283,28 @@ async def test_overwrite_is_refused_inside_the_anti_thrash_floor():
 
 async def test_overwrite_after_the_floor_supersedes_the_old_task():
     service, _ = _make_service()
+    client = _FakeClient(task_id=5)
+    service._client = client
     first = await service.try_claim_pending("挖点木头")
     assert first is not None
+    await service.dispatch_claimed(first)
     first.started_at -= 10.0  # age past the floor
     second = await service.try_claim_pending("改成挖铁", overwrite=True)
     assert second is not None
+    assert ("cancel_task", 5) in client.calls
     assert first.event.is_set()
     # Superseded, not failed — being replaced is not a malfunction.
     assert first.result["status"] == "superseded"
+
+
+async def test_overwrite_is_refused_when_the_old_task_cannot_be_cancelled():
+    service, _ = _make_service()
+    first = await service.try_claim_pending("挖点木头")
+    assert first is not None
+    first.started_at -= 10.0
+    # No task id yet, so there is nothing to cancel: the new one must not start.
+    assert await service.try_claim_pending("改成挖铁", overwrite=True) is None
+    assert service._pending is first
 
 
 async def test_stop_releases_a_waiting_slot():
@@ -285,7 +324,7 @@ async def test_watchdog_releases_the_slot_when_no_completion_arrives():
     # Without the watchdog a lost `done` event would wedge the slot forever
     # and every later dispatch would answer "busy".
     assert service._pending is None
-    assert any("coalesce_key" in call and call["coalesce_key"] == "mcbot_completion" for call in pushes)
+    assert any(call["coalesce_key"].startswith("mcbot_timeout:") for call in pushes)
     await service.stop()
 
 
@@ -333,17 +372,35 @@ async def test_dispatch_without_a_client_returns_a_friendly_error():
 # ---------------------------------------------------------------------------
 
 
-async def test_progress_becomes_a_read_cue_and_is_throttled():
+async def test_failed_tool_step_becomes_a_midway_read_cue_and_is_throttled():
     service, pushes = _make_service()
-    await service.handle_event(_frame("progress", text="step one"))
-    await service.handle_event(_frame("progress", text="step two"))
-    # One progress frame is emitted per executed step; without the floor a
-    # busy task floods the dialog context.
+    failed = dict(tool="attack", ok=False)
+    await service.handle_event(_fresh("progress", text="step one", **failed))
+    await service.handle_event(_fresh("progress", text="step two", **failed))
+    # A failed step is the only progress that reaches the dialog, and the
+    # floor keeps a run of failures from flooding it.
     assert len(pushes) == 1
     assert pushes[0]["ai_behavior"] == "read"
     assert pushes[0]["coalesce_key"] == "mcbot_progress"
     assert pushes[0]["priority"] == 4
+    assert pushes[0]["visibility"] == []
     assert "step one" in pushes[0]["parts"][0]["text"]
+
+
+async def test_successful_tool_step_is_blind_and_panel_only():
+    service, pushes = _make_service()
+    await service.handle_event(_frame("progress", text="scan_area ✔ 我在", tool="scan_area", ok=True))
+    assert len(pushes) == 1
+    assert pushes[0]["ai_behavior"] == "blind"
+    assert pushes[0]["visibility"] == ["hud"]
+
+
+async def test_guardrail_and_job_progress_are_blind():
+    service, pushes = _make_service()
+    await service.handle_event(_fresh("progress", text="（护栏）已叫停"))
+    await service.handle_event(_fresh("progress", text="第 3/7 格", job_id="j1", tool="fill"))
+    assert [c["ai_behavior"] for c in pushes] == ["blind", "blind"]
+    assert all(c["visibility"] == [] for c in pushes)
 
 
 async def test_done_resolves_the_matching_task_and_responds():
@@ -359,7 +416,7 @@ async def test_done_resolves_the_matching_task_and_responds():
     # v1.0 terminal vocabulary, not an invented "ok".
     assert claimed.result["status"] == "completed"
 
-    completion = [c for c in pushes if c["coalesce_key"] == "mcbot_completion"]
+    completion = [c for c in pushes if c["coalesce_key"].startswith("mcbot_done:")]
     assert len(completion) == 1
     assert completion[0]["ai_behavior"] == "respond"
     assert completion[0]["priority"] == 7
@@ -385,16 +442,34 @@ async def test_question_is_recorded_and_asks_the_user():
         _frame("question", question_id="q3", text="要我把它烧掉吗", task_id=1)
     )
     assert service.get_status()["pending_questions"] == 1
-    question = [c for c in pushes if c["coalesce_key"] == "mcbot_question"]
+    question = [c for c in pushes if c["coalesce_key"].startswith("mcbot_question:")]
     assert question and question[0]["ai_behavior"] == "respond"
     assert question[0]["priority"] == 8
 
 
-async def test_state_becomes_a_read_cue():
+async def test_companion_session_state_is_read_and_reprobes_status():
     service, pushes = _make_service()
-    await service.handle_event(_frame("state", text="同伴已召唤"))
+    service._client = _FakeClient()
+    await service.handle_event(_frame("state", task_id=0, text="同伴已召唤"))
     assert pushes and pushes[0]["ai_behavior"] == "read"
     assert pushes[0]["coalesce_key"] == "mcbot_state"
+    assert ("get_status",) in service._client.calls
+    assert service.companion == "aimi"
+
+
+async def test_answered_state_is_read_and_never_throttled():
+    service, pushes = _make_service()
+    service._state_min_interval = 60.0
+    await service.handle_event(_fresh("state", task_id=0, text="同伴已召唤"))
+    await service.handle_event(_fresh("state", task_id=5, text="主人已回答 q3"))
+    reads = [c for c in pushes if c["ai_behavior"] == "read"]
+    assert len(reads) == 2
+
+
+async def test_task_state_is_blind():
+    service, pushes = _make_service()
+    await service.handle_event(_frame("state", task_id=5, text="排队中"))
+    assert pushes and pushes[0]["ai_behavior"] == "blind"
 
 
 async def test_unknown_and_malformed_events_are_ignored():
@@ -518,6 +593,29 @@ async def test_reset_cursor_clears_the_last_event_id():
     assert client.last_event_id == ""
 
 
+async def test_a_failed_frame_holds_the_cursor_so_reconnect_replays_it():
+    import httpx
+
+    body = (
+        'id: 1\nevent: progress\ndata: {"task_id": 1, "text": "a"}\n\n'
+        'id: 2\nevent: progress\ndata: {"task_id": 1, "text": "b"}\n\n'
+        'id: 3\nevent: progress\ndata: {"task_id": 1, "text": "c"}\n\n'
+    )
+    client = _client_with_transport(
+        lambda request: httpx.Response(200, content=body.encode(), headers={"content-type": "text/event-stream"})
+    )
+    seen: list[str] = []
+
+    async def handler(frame):
+        seen.append(frame.id)
+        if frame.id == "2":
+            raise RuntimeError("consumer broke")
+
+    await client.pump_events(handler)
+    assert seen == ["1", "2", "3"]
+    assert client.last_event_id == "1"
+
+
 async def test_adopt_session_resets_the_cursor_when_the_session_changes():
     service, _ = _make_service()
     client = _FakeClient(
@@ -601,11 +699,11 @@ async def test_a_failed_done_is_never_framed_as_success(status):
         _frame("done", task_id=1, text="找不到路", status=status, session_id=service._session_id)
     )
     assert claimed.result["status"] == status
-    cues = [c for c in pushes if c["coalesce_key"] == "mcbot_completion"]
+    cues = [c for c in pushes if c["coalesce_key"].startswith("mcbot_done:")]
     assert len(cues) == 1
     text = cues[0]["parts"][0]["text"]
     # The failure wording, not the "finished" one.
-    assert "did not finish" in text or "没做成" in text
+    assert "didn't pull it off" in text or "没做成" in text
 
 
 @pytest.mark.parametrize("status", ["cancelled", "superseded"])
@@ -621,7 +719,7 @@ async def test_cancelled_and_superseded_dones_stay_silent(status):
     )
     assert claimed.result["status"] == status
     assert not service.has_pending_task()
-    assert [c for c in pushes if c["coalesce_key"] == "mcbot_completion"] == []
+    assert [c for c in pushes if c["coalesce_key"].startswith("mcbot_done:")] == []
 
 
 async def test_a_done_arriving_before_the_post_returns_is_still_grouped():
@@ -645,7 +743,7 @@ async def test_a_done_arriving_before_the_post_returns_is_still_grouped():
     assert claimed.awaiting_id is False
     assert claimed.event.is_set()
     assert claimed.result["status"] == "completed"
-    assert any(c["coalesce_key"] == "mcbot_completion" for c in pushes)
+    assert any(c["coalesce_key"].startswith("mcbot_done:") for c in pushes)
 
 
 async def test_an_unattributable_done_does_not_clear_our_slot():
@@ -723,7 +821,159 @@ def test_error_envelope_carries_no_transport_detail(exc):
     assert envelope["output"]["error"]
 
 
-def test_progress_cue_carries_the_internal_state_gag():
+async def test_cancel_with_nothing_running_says_so():
+    from mcbot_bridge_plugin import prompts
+
+    service, _ = _make_service()
+    assert await service.cancel(None) == prompts.t("CANCEL_NOTHING", lang=service._lang)
+
+
+async def test_cancel_of_another_task_id_leaves_the_pending_task_running():
+    service, _ = _make_service()
+    client = _FakeClient(task_id=5)
+    service._client = client
+    claimed = await service.try_claim_pending("挖点木头")
+    await service.dispatch_claimed(claimed)
+    await service.cancel(9)
+    assert ("cancel_task", 9) in client.calls
+    assert service._pending is claimed
+    assert not claimed.event.is_set()
+
+
+async def test_cancel_refused_by_the_bridge_keeps_the_task_running():
+    from mcbot_bridge_plugin import prompts
+
+    service, _ = _make_service()
+    client = _FakeClient(task_id=5)
+    client.cancel_result = {"ok": False}
+    service._client = client
+    claimed = await service.try_claim_pending("挖点木头")
+    await service.dispatch_claimed(claimed)
+    assert await service.cancel(None) == prompts.t("CANCEL_REFUSED", lang=service._lang)
+    assert service._pending is claimed
+
+
+async def test_question_cue_keeps_the_full_text_without_a_metadata_channel():
+    service, pushes = _make_service()
+    long_text = "问" * 300
+    await service.handle_event(
+        _frame("question", question_id="q9", text=long_text, task_id=1)
+    )
+    cues = [c for c in pushes if c["coalesce_key"].startswith("mcbot_question:")]
+    assert len(cues) == 1
+    assert "metadata" not in cues[0]
+    assert long_text in str(cues[0])
+
+
+async def test_answer_without_an_id_binds_to_the_only_open_question():
+    service, _ = _make_service()
+    service._client = _FakeClient()
+    await service.handle_event(_frame("question", question_id="q3", text="烧掉吗", task_id=1))
+    result = await service.answer("", "烧")
+    assert isinstance(result, str)
+    assert ("answer", "q3", "烧") in service._client.calls
+
+
+async def test_answer_without_an_id_is_refused_when_several_are_open():
+    service, _ = _make_service()
+    service._client = _FakeClient()
+    await service.handle_event(_fresh("question", question_id="q1", text="a", task_id=1))
+    await service.handle_event(_fresh("question", question_id="q2", text="b", task_id=1))
+    result = await service.answer("", "烧")
+    assert result["error"] == "AMBIGUOUS_QUESTION"
+    assert not [c for c in service._client.calls if c[0] == "answer"]
+
+
+async def test_answer_without_an_id_is_refused_when_none_are_open():
+    service, _ = _make_service()
+    service._client = _FakeClient()
+    result = await service.answer("", "烧")
+    assert result["error"] == "NO_OPEN_QUESTION"
+
+
+async def test_explicit_answer_id_is_forwarded_to_the_bridge():
+    service, _ = _make_service()
+    service._client = _FakeClient()
+    await service.answer("q42", "好")
+    assert ("answer", "q42", "好") in service._client.calls
+
+
+async def test_expired_questions_are_not_answerable_by_default():
+    service, _ = _make_service()
+    service._client = _FakeClient()
+    await service.handle_event(_frame("question", question_id="q1", text="a", task_id=1))
+    service._pending_questions["q1"]["asked_at"] -= 200
+    result = await service.answer("", "烧")
+    assert result["error"] == "NO_OPEN_QUESTION"
+
+
+async def test_questions_are_forgotten_when_their_task_finishes():
+    service, _ = _make_service()
+    service._client = _FakeClient(task_id=9)
+    claimed = await service.try_claim_pending("挖点木头")
+    await service.dispatch_claimed(claimed)
+    await service.handle_event(_frame("question", question_id="q1", text="a", task_id=9))
+    await service.handle_event(_frame("done", task_id=9, text="挖好了", status="completed"))
+    assert service.get_status()["pending_questions"] == 0
+    await service.stop()
+
+
+async def test_companion_name_is_only_taken_from_status_not_from_frames():
+    service, _ = _make_service()
+    service._client = _FakeClient(status_payload={"contract_version": "1.0"})
+    await service.handle_event(_frame("progress", companion="ghost", text="砍树", tool="x", ok=False))
+    assert service.companion == ""
+
+
+async def test_companion_name_is_bracketed_into_cues():
+    service, pushes = _make_service()
+    await service._note_companion("aimi")
+    await service.handle_event(_frame("progress", task_id=1, text="砍了三棵树"))
+    cues = [c for c in pushes if c["coalesce_key"] == "mcbot_progress"]
+    assert len(cues) == 1
+    assert "（aimi）" in str(cues[0])
+
+
+async def test_a_changed_companion_name_announces_the_new_body_once():
+    service, pushes = _make_service()
+    await service._note_companion("aimi")
+    await service._note_companion("aimi")
+    assert pushes == []
+    await service._note_companion("luna")
+    cues = [c for c in pushes if c["coalesce_key"] == "mcbot_body"]
+    assert len(cues) == 1
+    assert service.companion == "luna"
+
+
+async def test_state_cues_are_throttled_by_the_minimum_interval():
+    service, pushes = _make_service()
+    service._client = _FakeClient()
+    service._state_min_interval = 60.0
+    await service.handle_event(_fresh("state", task_id=0, text="a"))
+    await service.handle_event(_fresh("state", task_id=0, text="b"))
+    assert len([c for c in pushes if c["ai_behavior"] == "read"]) == 1
+
+
+def test_done_cue_carries_the_internal_state_gag():
+    service, pushes = _make_service()
+    service.set_lang("en")
+    service._push_cue(
+        "CUE_DONE",
+        ai_behavior="respond",
+        priority=7,
+        coalesce_key="mcbot_done:x",
+        text="mined 3 cobble",
+        status="completed",
+    )
+    assert len(pushes) == 1
+    text = pushes[0]["parts"][0]["text"]
+    assert "mined 3 cobble" in text
+    # The gag is why the character narrates in-world instead of reporting
+    # "SSE" / "mcbot" / "tool" to the user.
+    assert "Do NOT narrate internals" in text
+
+
+def test_progress_cue_does_not_repeat_the_gag():
     service, pushes = _make_service()
     service.set_lang("en")
     service._push_cue(
@@ -733,9 +983,163 @@ def test_progress_cue_carries_the_internal_state_gag():
         coalesce_key="mcbot_progress",
         text="mined 3 cobble",
     )
-    assert len(pushes) == 1
-    text = pushes[0]["parts"][0]["text"]
-    assert "mined 3 cobble" in text
-    # The gag is why the character narrates in-world instead of reporting
-    # "SSE" / "mcbot" / "tool" to the user.
-    assert "Do NOT narrate internals" in text
+    assert "Do NOT narrate internals" not in pushes[0]["parts"][0]["text"]
+
+
+# ---------------------------------------------------------------------------
+# The open-question hint on mcbot_task
+#
+# Live 2026-10-13: the owner answered a relayed question, the model called
+# mcbot_task instead of mcbot_answer, the dispatch was refused as busy, and the
+# companion's question then timed out unanswered. The question cue's turn was
+# long over by the time the owner replied, so nothing else in the model's
+# context says an answer is expected — the redirect rides on this tool's own
+# result, the one thing the model is certainly reading.
+# ---------------------------------------------------------------------------
+
+
+def test_has_open_question_ignores_expired_entries():
+    service, _ = _make_service()
+    service._pending_questions["q1"] = {
+        "text": "打吗",
+        "asked_at": time.time() - 9999.0,
+    }
+    assert service.has_open_question() is False
+
+
+class _FacadeStub:
+    """Just enough of the plugin facade for the tool body.
+
+    The SDK decorators are identity stubs under the standalone harness, so the
+    tool can be driven unbound without standing up a plugin context — which the
+    conftest stub deliberately does not provide.
+    """
+
+    _lang = "zh"
+
+    def __init__(self, service):
+        self._service = service
+
+    async def _ensure_service_started(self):
+        return None
+
+
+async def test_task_result_carries_the_open_question_hint(plugin_module):
+    service, _ = _make_service()
+    await service.handle_event(_frame("question", question_id="q1", text="打还是侦察"))
+    await service.try_claim_pending("占着槽位")  # force the busy branch
+    await _settle()
+
+    result = await plugin_module.McbotBridgePlugin.mcbot_task(
+        _FacadeStub(service), text="我们先侦查"
+    )
+
+    assert "mcbot_answer" in result
+
+
+async def test_task_result_omits_the_hint_when_nothing_is_open(plugin_module):
+    service, _ = _make_service()
+    await service.try_claim_pending("占着槽位")
+    await _settle()
+
+    result = await plugin_module.McbotBridgePlugin.mcbot_task(
+        _FacadeStub(service), text="我们先侦查"
+    )
+
+    assert "mcbot_answer" not in result
+
+
+# ---------------------------------------------------------------------------
+# Authorisation questions have to tell the owner how to answer
+#
+# The bridge matches the *whole* trimmed reply against 是/是的/同意/确认/允许/可以/
+# 批准/yes/approve/confirm/ok. Live 2026-10-13: the relay worked and the model
+# picked the right tool, but the owner's "就这个路线" was refused as
+# unapproved, so the companion's route change died on a wording mismatch.
+# ---------------------------------------------------------------------------
+
+
+def test_authorisation_questions_are_recognised_by_the_bridges_markers():
+    assert is_authorization_question("路线目的地 105, 68, 101；具体清单：place@105,78,95 air")
+    assert is_authorization_question("要动的方块：石头×2")
+    assert not is_authorization_question("你是要我过去清怪，还是只远远侦察不接触？")
+
+
+async def test_authorisation_question_tells_the_owner_the_exact_word():
+    service, pushes = _make_service()
+    service.set_lang("zh")
+    await service.handle_event(
+        _frame(
+            "question",
+            question_id="q1",
+            text="路线目的地 105, 68, 101；挖 0 格、放 11 格。具体清单：place@105,78,95 air",
+        )
+    )
+    assert "确认" in pushes[0]["parts"][0]["text"]
+
+
+async def test_ordinary_question_carries_no_authorisation_note():
+    service, pushes = _make_service()
+    service.set_lang("zh")
+    await service.handle_event(
+        _frame("question", question_id="q2", text="你是要我过去清怪，还是只远远侦察不接触？")
+    )
+    assert "确认" not in pushes[0]["parts"][0]["text"]
+
+
+# ---------------------------------------------------------------------------
+# The SSE cursor survives a restart
+#
+# Without Last-Event-ID the bridge replays its whole 200-frame ring. A plugin
+# restart used to arrive with no cursor, so every reload re-narrated minutes of
+# finished work: live 2026-10-13 20:00:07 pushed 15 stale cues in one second,
+# and the character reported a job as finished that had not run.
+# ---------------------------------------------------------------------------
+
+
+async def test_remembered_cursor_is_resumed_after_a_restart(tmp_path):
+    cursor = tmp_path / "data" / "cursor.json"
+    service, _ = _make_service()
+    service._cursor_path = cursor
+    service._client = _FakeClient()
+    service._session_id = "sess-A"
+    service._client.last_event_id = "42"
+    await service._maybe_persist_cursor()
+    assert cursor.exists()
+
+    # A fresh process probes status, sees the same session, and resumes.
+    restarted, _ = _make_service()
+    restarted._cursor_path = cursor
+    restarted._client = _FakeClient()
+    await restarted._sync_session("sess-A")
+
+    assert restarted._client.restored_cursors == ["42"]
+    assert restarted._client.cursor_resets == 0
+
+
+async def test_remembered_cursor_is_dropped_when_the_session_changed(tmp_path):
+    cursor = tmp_path / "data" / "cursor.json"
+    service, _ = _make_service()
+    service._cursor_path = cursor
+    service._client = _FakeClient()
+    service._session_id = "sess-A"
+    service._client.last_event_id = "42"
+    await service._maybe_persist_cursor()
+
+    restarted, _ = _make_service()
+    restarted._cursor_path = cursor
+    restarted._client = _FakeClient()
+    await restarted._sync_session("sess-B")
+
+    assert restarted._client.restored_cursors == []
+    assert restarted._client.cursor_resets == 1
+
+
+async def test_no_cursor_is_written_when_no_frames_have_arrived(tmp_path):
+    cursor = tmp_path / "data" / "cursor.json"
+    service, _ = _make_service()
+    service._cursor_path = cursor
+    service._client = _FakeClient()
+    service._session_id = "sess-A"
+    await service._maybe_persist_cursor()
+    assert not cursor.exists()

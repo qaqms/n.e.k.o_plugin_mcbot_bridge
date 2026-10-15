@@ -69,15 +69,38 @@ mcbot 出于安全考虑只在**回环地址**上开桥，而且**只在 Minecra
 
 第三条是**反向**通道：SSE 事件被翻译成 `push_message`，于是猫娘能主动反应，不需要任何人轮询。
 
-| SSE 事件 | ai_behavior | priority | coalesce_key |
-|---|---|---|---|
-| `progress` | `read` | 4 | `mcbot_progress` |
-| `done` | `respond` | 7 | `mcbot_completion` |
-| `question` | `respond` | 8 | `mcbot_question` |
-| `state` | `read` | 4 | `mcbot_state` |
+| SSE 事件 | 分类 | ai_behavior | visibility | priority | coalesce_key |
+|---|---|---|---|---|---|
+| `progress` 工具回执 `ok=true` | 纯叙事 | `blind` | `["hud"]` | 4 | `mcbot_progress` |
+| `progress` 工具回执 `ok=false` | 中途失败 | `read` | `[]` | 4 | `mcbot_progress` |
+| `progress` 护栏 / 长活中间帧 | 不给模型 | `blind` | `[]` | 4 | `mcbot_progress` |
+| `done` | 终局 | `respond` | `[]` | 7 | `mcbot_completion` |
+| `question` | 反问 | `respond` | `[]` | 8 | `mcbot_question` |
+| `state` task_id=0（同伴会话事件） | 触发探针 | `read` | `[]` | 4 | `mcbot_state` |
+| `state` 「主人已回答」 | 答案闭环 | `read` | `[]` | 4 | `mcbot_state` |
+| `state` queued / running / parked | 不给模型 | `blind` | `[]` | 4 | `mcbot_state` |
 
 `visibility=[]` 意味着用户看不到 cue 本身：模型吸收它，并在它开启的那一轮里**用自己的话讲出来**。
 "猫娘在解说同伴"就是产品本身——兄弟插件收敛到了同一形态。
+`blind` 完全压住注入（宿主 `character_runtime` 明写 blind 绝不进 LLM 通道）。纯叙事的进展不对模型讲话，
+避免第一人称的"我在挖石头"被对话模型当成"我还在忙，不该再派活"。
+
+### 通道验收表（改动通道时必查）
+
+这份表记录每个字段由谁产生、宿主是否真的读它。凡是改动 cue 的字段、`visibility` / `ai_behavior`、
+工具 schema，或新增"依赖宿主替我们做 X"的假设，都要对照此表逐行核对：
+
+| 字段 | 生产者 | 消费侧 | 结论 |
+|---|---|---|---|
+| cue `metadata` | 插件 SDK 装进 wire | 宿主 `main_logic/core/callback_render.py` 只读 `summary` / `detail` | ❌ 到不了模型，不要用它传 `question_id` 之类的标识 |
+| 桥帧 `companion` | 模组只盖 `contract_version` + `session_id` | 插件从 `/v1/status` 读取 | ❌ 帧里没有它，不要从帧里读 |
+| progress 帧 `ok` | 模组 `AgentRunner` 的 `onToolInvoked` 发出 | 插件据此分类 | ✅ 用于区分失败与成功回执 |
+| `visibility` / `ai_behavior` | 插件发 | 宿主显式校验并真分流 | ✅ 唯二验过的通道之一 |
+| cue 正文 / 工具 schema | 插件 | 对话模型 | ✅ 模型可见的只有这两个通道 |
+
+**模型可见通道只有 cue 正文与工具 schema**，不存在"不朗读的模型可见标识符"通道。
+因此 `question_id` 由插件侧解析：`mcbot_answer` 省略它时，只有恰好一个仍有效的待答问题会被采用；
+没有或多于一个则报错要求澄清，绝不取"最近的一个"。
 
 ---
 
@@ -99,13 +122,15 @@ mcbot 出于安全考虑只在**回环地址**上开桥，而且**只在 Minecra
 
 **待办（下次优先）**：
 
-1. **cue 刷屏**。`progress` 节流 6s ≈ 10 条/分钟、`state` 完全没有节流、且 `coalesce_key`
-   在被动队列里未见折叠。被动 cue 会攒批，用户下一轮开口时一次性倒进上下文——
-   疑似把用户自己的请求淹掉（表现为「发了指令但没执行」）。**优先治这条。**
+1. **cue 刷屏**。`progress` 节流 6s ≈ 10 条/分钟；`state` 现已按 `state_min_interval_seconds` 节流，
+   完成/超时/反问的 `coalesce_key` 已按任务或问题区分，不再互相折叠。被动 cue 会攒批，用户下一轮开口时一次性倒进上下文——
+   需要真机复测确认没有淹掉用户自己的请求（表现为「发了指令但没执行」）。
 2. `done.status = failed` 的措辞复测。首次真机时她曾把失败任务说成「挖好啦」，
    但那次跑的是**不含 `CUE_DONE_FAILED` 修复的旧代码**——修复后需要重新验一次。
 3. `task_wait_timeout_seconds` 已由 300 调到 **900**（实测 300s 会在复合任务中途开火、
    提前释放任务槽），待复测不再提前开火。
+4. **面板**。`surfaces/mcbot.tsx` 显示在线状态、当前身体、当前任务、待答问题，并有「停止任务」按钮
+   （对应 `mcbot_stop` UI action，等同于让同伴放下全部任务）。面板尚未在真机上验过。
 
 ## 已知限制与与兄弟插件的差异
 
@@ -132,9 +157,10 @@ mcbot 出于安全考虑只在**回环地址**上开桥，而且**只在 Minecra
 | `reconnect_interval_seconds` | `5.0` | 事件流断开后的重连间隔 |
 | `http_timeout_seconds` | `10.0` | 短调用（派活/取消/答复/查状态）的超时 |
 | `ask_timeout_seconds` | `150.0` | `/v1/ask` 的超时；**必须**大于 mcbot 自己的 135s 上限 |
-| `task_wait_timeout_seconds` | `300.0` | 等完成事件的预算；超时则放开任务槽并如实说"没等到回音" |
+| `task_wait_timeout_seconds` | `900.0` | 等完成事件的预算；超时则放开任务槽并如实说"没等到回音"。300s 实测会在复合任务中途开火 |
 | `stream_events` | `true` | 是否订阅事件流；关掉后同伴不再主动开口 |
-| `progress_min_interval_seconds` | `6.0` | 进展播报的最小间隔 |
+| `progress_min_interval_seconds` | `6.0` | 工具失败的中途播报（`ok=false`）的最小间隔；纯叙事进展不进对话，不受此限 |
+| `state_min_interval_seconds` | `6.0` | 状态播报的最小间隔 |
 
 `[plugin_runtime] auto_start = false`：手动启动。别在用户打开插件时就去连一个还没跑起来的 Minecraft。
 
@@ -198,6 +224,10 @@ Copy-Item .\__init__.py,.\client.py,.\service.py,.\prompts.py,.\plugin.toml,`
   .\config.schema.json,.\README.md -Destination $dst -Force
 Copy-Item .\i18n -Destination $dst -Recurse -Force
 ```
+
+**接缝测试说明。** 离线单测把 `push_message` 换成假替身，天生看不见"宿主是否真的替我们做了 X"这类断裂
+（65 项全绿时仍漏掉了 `metadata` 不可达、`question_id` 无法回传的死路）。凡新增"依赖宿主会替我们做 X"的假设，
+必须在接缝处验一次（真实宿主，或对照宿主代码核对），不能只补 service 单测。
 
 宿主会为这份副本生成 `plugin.meta.json`（它是构建产物，在源仓库里生成不了——探针要求插件
 处在 `plugin.plugins.<id>` 路径上）。仓内那份副本是临时的，**不要提交到 N.E.K.O. 仓库**。

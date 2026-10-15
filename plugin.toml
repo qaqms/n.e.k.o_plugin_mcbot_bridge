@@ -26,6 +26,15 @@ auto_start = false
 [plugin.ui]
 enabled = true
 
+[[plugin.ui.guide]]
+id = "mcbot"
+title = "mcbot 同伴"
+entry = "surfaces/mcbot.tsx"
+# context 对应 @ui.context(id="mcbot")；缺了 api.call 会因 UI context not found 失败。
+context = "mcbot"
+# action:call 让面板通过 props.api.call 调用 mcbot_status / mcbot_stop。
+permissions = ["state:read", "action:call"]
+
 [mcbot]
 # mcbot 的本地桥（仅在 Minecraft 客户端进入世界时监听）。
 base_url = "http://127.0.0.1:57121"
@@ -67,3 +76,6 @@ stream_events = true
 # progress，不设闸会把上下文灌满；同一个 coalesce_key 只会折叠在队列里，
 # 落不进已发出的回合。
 progress_min_interval_seconds = 6.0
+
+# state 事件（同伴的身体状态变化）推进上下文的最小间隔，同理。
+state_min_interval_seconds = 6.0

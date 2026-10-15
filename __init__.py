@@ -73,8 +73,10 @@ MCBOT_TASK_SCHEMA: Dict[str, Any] = {
             "description": (
                 "Set true only to interrupt an in-flight task: the user "
                 "corrected or cancelled it, or the current task is plainly "
-                "stuck. Default false, which returns a 'busy' answer and "
-                "leaves the in-flight task running."
+                "stuck. A task that was dispatched only a moment ago cannot be "
+                "interrupted yet and returns 'busy' — wait and try again. "
+                "Default false, which returns a 'busy' answer and leaves the "
+                "in-flight task running."
             ),
         },
     },
@@ -93,8 +95,11 @@ MCBOT_TASK_DESCRIPTION = (
     "last instruction may still be running, do not send another.\n\n"
     "Use it when the user asks the companion to do something new that has not "
     "already been sent. Do NOT use it for questions about her state or what "
-    "she is carrying — those are answered by the mcbot_status entry — and do "
-    "not re-send an earlier instruction merely because a cue arrived.\n\n"
+    "she is carrying, and do not re-send an earlier instruction merely because "
+    "a cue arrived. When the user asks the companion to go and ask the owner "
+    "(ask_owner) something, that is a task: pass it on verbatim, and do not "
+    "use mcbot_ask for it. If one of her questions is still open and the "
+    "user's words answer it, that is mcbot_answer — not this tool.\n\n"
     "Parameters:\n"
     "  text (string, required): the instruction, in the user's own wording "
     "when they gave one.\n"
@@ -114,10 +119,10 @@ MCBOT_ASK_SCHEMA: Dict[str, Any] = {
 }
 
 MCBOT_ASK_DESCRIPTION = (
-    "Ask the companion a direct question and wait for her spoken answer. Use "
-    "it for a one-off question the user wants asked of her specifically. It "
-    "blocks until she answers, so prefer mcbot_task for anything that is an "
-    "action rather than a question. If she is mid-task she may not answer."
+    "Call this when the owner asks you a question about the game. It asks the "
+    "in-game executor and brings the game state back to you, so answer the "
+    "owner from what it returns, in your own voice. It blocks until an answer "
+    "comes back; if the companion is mid-task she may not answer."
 )
 
 MCBOT_ANSWER_SCHEMA: Dict[str, Any] = {
@@ -125,21 +130,30 @@ MCBOT_ANSWER_SCHEMA: Dict[str, Any] = {
     "properties": {
         "question_id": {
             "type": "string",
-            "description": "The id of the open question, from the question cue.",
+            "description": (
+                "Optional. Leave it out: the open question is found for you. "
+                "Only set it when the owner is answering a specific question "
+                "you were told about by number."
+            ),
         },
         "text": {
             "type": "string",
             "description": "The user's answer, in their own words.",
         },
     },
-    "required": ["question_id", "text"],
+    "required": ["text"],
 }
 
 MCBOT_ANSWER_DESCRIPTION = (
-    "Answer a question the companion asked through a question cue. Use the "
-    "question_id from that cue and pass the user's answer as they gave it — do "
-    "not answer on the user's behalf. Only call this when the user actually "
-    "answered; if they did not, leave the question open."
+    "Answer a question the companion asked through a question cue. Pass the "
+    "user's answer as they gave it — do not answer on the user's behalf. Only "
+    "call this when the user actually answered; if they did not, leave the "
+    "question open. Several questions can be open at once; if you cannot tell "
+    "which one the answer is for, ask the user first.\n\n"
+    "An answer often sounds like a fresh instruction: to a question about "
+    "whether to fight or scout, 'let's scout first' is the answer, not a new "
+    "task. When you have relayed one of her questions and the user's next "
+    "words answer it, call this — not mcbot_task."
 )
 
 MCBOT_CANCEL_SCHEMA: Dict[str, Any] = {
@@ -299,6 +313,17 @@ class McbotBridgePlugin(NekoPluginBase):
             return prompts.t("TASK_IDENTIFIER_ERROR", lang=self._lang)
 
         await self._ensure_service_started()
+        # A reverse question still awaiting an answer is the one thing that
+        # turns the owner's next utterance into an answer rather than an
+        # instruction. Nothing else in the model's context says so once the
+        # question cue's turn has passed, so the hint rides on this tool's
+        # result — the model is reading it either way, and a wrong dispatch is
+        # exactly where the mistake becomes visible.
+        hint = (
+            prompts.t("TASK_OPEN_QUESTION_HINT", lang=self._lang)
+            if self._service.has_open_question()
+            else ""
+        )
         claimed = await self._service.try_claim_pending(
             task_text, overwrite=overwrite is True
         )
@@ -306,12 +331,15 @@ class McbotBridgePlugin(NekoPluginBase):
             current = self._service.current_task_text() or prompts.t(
                 "LABEL_IDLE", lang=self._lang
             )
-            return prompts.t("TASK_BUSY_HINT", lang=self._lang, current=current[:80])
+            return (
+                prompts.t("TASK_BUSY_HINT", lang=self._lang, current=current[:80])
+                + hint
+            )
 
         envelope = await self._service.dispatch_claimed(claimed)
         if envelope:
             return envelope
-        return prompts.t("TASK_DISPATCHED_ACK", lang=self._lang)
+        return prompts.t("TASK_DISPATCHED_ACK", lang=self._lang) + hint
 
     @llm_tool(
         name="mcbot_ask",
@@ -336,12 +364,13 @@ class McbotBridgePlugin(NekoPluginBase):
         timeout=30.0,
     )
     async def mcbot_answer(self, *, question_id: Any = None, text: Any = None, **_):
-        if not isinstance(question_id, str) or not question_id.strip():
+        if question_id is not None and (not isinstance(question_id, str) or not question_id.strip()):
             return prompts.t("ANSWER_SCHEMA_ERROR", lang=self._lang)
         if not isinstance(text, str) or not text.strip():
             return prompts.t("ANSWER_SCHEMA_ERROR", lang=self._lang)
         await self._ensure_service_started()
-        return await self._service.answer(question_id.strip(), text.strip())
+        qid = question_id.strip() if isinstance(question_id, str) else ""
+        return await self._service.answer(qid, text.strip())
 
     @llm_tool(
         name="mcbot_cancel",
@@ -350,11 +379,19 @@ class McbotBridgePlugin(NekoPluginBase):
         timeout=30.0,
     )
     async def mcbot_cancel(self, *, task_id: Any = None, **_):
-        # A model may send the id as a string; anything that is not a real int
-        # means "cancel whatever is running" rather than a hard failure.
-        tid = task_id if isinstance(task_id, int) and not isinstance(task_id, bool) else None
+        # Omitted or null means "everything"; an explicit value that is not a
+        # task id is refused rather than widened into a cancel-all.
+        if task_id is None:
+            tid = None
+        elif isinstance(task_id, int) and not isinstance(task_id, bool) and task_id >= 0:
+            tid = task_id
+        elif isinstance(task_id, str) and task_id.strip().isdigit():
+            tid = int(task_id.strip())
+        else:
+            return prompts.t("CANCEL_ID_ERROR", lang=self._lang)
         await self._ensure_service_started()
         return await self._service.cancel(tid)
+
 
     # ------------------------------------------------------------------
     # @plugin_entry — analyzer / panel / CLI surface
@@ -365,11 +402,8 @@ class McbotBridgePlugin(NekoPluginBase):
         id="mcbot_status",
         name="查询 mcbot 同伴状态",
         description=(
-            "查询 mcbot 同伴是否在线、她当前在做什么、有没有待你回答的问题。"
-            "适合在对话里明确问到同伴的状态时调用——「同伴在干嘛」「她在哪」"
-            "「她还在挖吗」「连上了吗」。"
-            "不要在对话是要让同伴做事（过来、挖矿、建造、跟随等）时调用——"
-            "那是 mcbot_task 的职责。"
+            "查询 mcbot 同伴的状态：身体（同伴）是否在线、她当前在做什么、有没有待答复的问题。"
+            "面向插件面板与分析器；对话模型不通过它派活或答复。"
         ),
         llm_result_fields=["summary"],
         input_schema={"type": "object", "properties": {}},
@@ -387,7 +421,6 @@ class McbotBridgePlugin(NekoPluginBase):
                 live = await self._service.probe_status()
                 if live:
                     connected = True
-                    status["companion"] = live
             status["connected"] = connected
 
             label = prompts.t(
@@ -409,6 +442,31 @@ class McbotBridgePlugin(NekoPluginBase):
                 # now (it may have been rotated out from under us).
                 status["summary"] += " " + prompts.t("NO_TOKEN_HINT", lang=self._lang)
             return Ok(status)
+        except Exception as exc:
+            return Err(f"{type(exc).__name__}: {exc}")
+
+    @ui.context(id="mcbot")
+    async def mcbot_ui_context(self, **_):
+        # Required by the hosted panel's props.api.call: without a provider for
+        # its context id, the host refuses every action call from the surface.
+        try:
+            return {"status": self._service.get_status()}
+        except Exception:
+            return {"status": {}}
+
+    @ui.action(id="mcbot_stop", label="停止任务")
+    @plugin_entry(
+        id="mcbot_stop",
+        name="停止 mcbot 当前任务",
+        description="让同伴停下当前在做的全部任务。只在用户明确要求停止时使用。",
+        llm_result_fields=["summary"],
+        input_schema={"type": "object", "properties": {}},
+    )
+    async def mcbot_stop(self, **_):
+        try:
+            await self._ensure_service_started()
+            summary = await self._service.cancel(None)
+            return Ok({"summary": summary, "result": self._service.get_status()})
         except Exception as exc:
             return Err(f"{type(exc).__name__}: {exc}")
 

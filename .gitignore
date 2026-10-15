@@ -15,3 +15,5 @@ build/
 store.db
 .env
 .DS_Store
+# Runtime state (the remembered SSE cursor); never committed.
+data/
