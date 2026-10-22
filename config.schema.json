@@ -130,7 +130,7 @@
             "es": "Dirección local del puente mcbot. Solo escucha mientras Minecraft está en un mundo y se detiene al salir.",
             "pt": "Endereço local da ponte mcbot. Ela só escuta enquanto o Minecraft está em um mundo e para ao sair."
           },
-          "default": "http://127.0.0.1:57121"
+          "default": "http://127.0.0.1:17897"
         },
         "game_dir": {
           "type": "string",

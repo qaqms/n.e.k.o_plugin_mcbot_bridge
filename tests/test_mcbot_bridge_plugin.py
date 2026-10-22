@@ -35,6 +35,7 @@ try:
         SseFrame,
     )
     from mcbot_bridge_plugin.service import (  # type: ignore[import-not-found]
+        DONE_TEXT_LIMIT,
         McbotService,
         is_authorization_question,
         normalise_base_url,
@@ -54,6 +55,7 @@ except ModuleNotFoundError:  # pragma: no cover - depends on checkout layout
         SseFrame,
     )
     from plugin.plugins.mcbot_bridge.service import (  # noqa: E402
+        DONE_TEXT_LIMIT,
         McbotService,
         is_authorization_question,
         normalise_base_url,
@@ -81,7 +83,7 @@ class _FakeClient:
         raise_on: dict[str, Exception] | None = None,
         status_payload: dict | None = None,
     ) -> None:
-        self.base_url = "http://127.0.0.1:57121"
+        self.base_url = "http://127.0.0.1:17897"
         self.token = ""
         self._task_id = task_id
         self._ask_answer = ask_answer
@@ -114,7 +116,7 @@ class _FakeClient:
     def is_streaming(self) -> bool:
         return self._streaming
 
-    async def post_task(self, text: str, *, wait_s: float = 0.0) -> dict:
+    async def post_task(self, text: str, *, wait_s: int = 0) -> dict:
         self.calls.append(("post_task", text, wait_s))
         self._maybe_raise("post_task")
         return {"task_id": self._task_id, "done": False, "fragments": []}
@@ -198,7 +200,7 @@ def test_configure_uses_shipped_defaults_when_keys_missing():
     service, _ = _make_service()
     service.configure({})
     status = service.get_status()
-    assert status["base_url"] == "http://127.0.0.1:57121"
+    assert status["base_url"] == "http://127.0.0.1:17897"
     assert status["stream_enabled"] is True
 
 
@@ -222,18 +224,18 @@ def test_configure_ignores_wrongly_typed_values():
     service, _ = _make_service()
     service.configure({"stream_events": "yes", "base_url": 42, "game_dir": None})
     assert service._stream_events is True
-    assert service._base_url == "http://127.0.0.1:57121"
+    assert service._base_url == "http://127.0.0.1:17897"
     assert service._game_dir == ""
 
 
 @pytest.mark.parametrize(
     "raw,expected",
     [
-        ("127.0.0.1:57121", "http://127.0.0.1:57121"),
-        ("http://127.0.0.1:57121/", "http://127.0.0.1:57121"),
-        ("http://127.0.0.1:57121///", "http://127.0.0.1:57121"),
-        ("", "http://127.0.0.1:57121"),
-        ("   ", "http://127.0.0.1:57121"),
+        ("127.0.0.1:17897", "http://127.0.0.1:17897"),
+        ("http://127.0.0.1:17897/", "http://127.0.0.1:17897"),
+        ("http://127.0.0.1:17897///", "http://127.0.0.1:17897"),
+        ("", "http://127.0.0.1:17897"),
+        ("   ", "http://127.0.0.1:17897"),
         ("http://host:1/path", "http://host:1/path"),
     ],
 )
@@ -423,6 +425,109 @@ async def test_done_resolves_the_matching_task_and_responds():
     await service.stop()
 
 
+@pytest.mark.parametrize("directive", ["恢复目标", "目标状态", "放弃目标"])
+async def test_a_command_directive_is_narrated_as_a_receipt_not_as_finished(directive):
+    """mcbot reports COMPLETED for these commands, but only as *accepted*.
+
+    `恢复目标` then runs the goal under a new task id, and `目标状态` does no
+    work at all — calling either "I finished" tells the owner a goal is met.
+    """
+    service, pushes = _make_service()
+    service.set_lang("en")
+    service._client = _FakeClient(task_id=12)
+    claimed = await service.try_claim_pending(directive)
+    assert claimed is not None
+    await service.dispatch_claimed(claimed)
+
+    await service.handle_event(
+        _frame("done", task_id=12, text="Recovery accepted; the goal verifies the world first.",
+               status="completed")
+    )
+    cues = [c for c in pushes if c["coalesce_key"].startswith("mcbot_done:")]
+    assert len(cues) == 1
+    text = cues[0]["parts"][0]["text"]
+    assert "Command receipt" in text
+    assert directive in text
+    assert "I finished" not in text
+    assert "I've stopped" not in text
+
+
+async def test_a_failed_command_keeps_the_failure_frame():
+    service, pushes = _make_service()
+    service.set_lang("en")
+    service._client = _FakeClient(task_id=12)
+    claimed = await service.try_claim_pending("恢复目标")
+    await service.dispatch_claimed(claimed)
+
+    await service.handle_event(
+        _frame("done", task_id=12, text="RECOVERY_EMPTY: nothing to restore.", status="failed")
+    )
+    cues = [c for c in pushes if c["coalesce_key"].startswith("mcbot_done:")]
+    assert len(cues) == 1
+    assert "didn't pull it off" in cues[0]["parts"][0]["text"]
+
+
+async def test_an_ordinary_task_still_gets_the_finished_frame():
+    service, pushes = _make_service()
+    service.set_lang("en")
+    service._client = _FakeClient(task_id=13)
+    claimed = await service.try_claim_pending("collect three logs")
+    await service.dispatch_claimed(claimed)
+
+    await service.handle_event(
+        _frame("done", task_id=13, text="Collected 3 logs.", status="completed")
+    )
+    text = [c for c in pushes if c["coalesce_key"].startswith("mcbot_done:")][0]["parts"][0]["text"]
+    assert "I finished" in text
+
+
+async def test_dispatch_sends_wait_s_as_an_integer():
+    """The contract types ``wait_s`` as an integer; ``0.0`` only works by luck.
+
+    mcbot strips trailing zeros before checking the scale, so a float slips
+    through today — a stricter implementation answers 400.
+    """
+    service, _ = _make_service()
+    client = _FakeClient(task_id=3)
+    service._client = client
+    claimed = await service.try_claim_pending("collect three logs")
+    await service.dispatch_claimed(claimed)
+
+    call = next(c for c in client.calls if c[0] == "post_task")
+    assert call[2] == 0
+    assert type(call[2]) is int
+    assert json.dumps({"wait_s": call[2]}) == '{"wait_s": 0}'
+
+
+async def test_a_long_done_report_reaches_the_model_intact():
+    """The cue is the only channel for the outcome — the tool returns {}."""
+    service, pushes = _make_service()
+    service._client = _FakeClient(task_id=14)
+    claimed = await service.try_claim_pending("build the wall")
+    await service.dispatch_claimed(claimed)
+
+    report = "row " + ("d" * 1200) + " tail-marker"
+    await service.handle_event(_frame("done", task_id=14, text=report, status="completed"))
+    text = [c for c in pushes if c["coalesce_key"].startswith("mcbot_done:")][0]["parts"][0]["text"]
+    # Under the old 600-char cap this tail was silently lost.
+    assert "tail-marker" in text
+
+
+async def test_a_runaway_done_report_is_clipped_with_a_marker():
+    service, pushes = _make_service()
+    service.set_lang("en")
+    service._client = _FakeClient(task_id=15)
+    claimed = await service.try_claim_pending("build the wall")
+    await service.dispatch_claimed(claimed)
+
+    report = "z" * (DONE_TEXT_LIMIT + 500)
+    await service.handle_event(_frame("done", task_id=15, text=report, status="completed"))
+    text = [c for c in pushes if c["coalesce_key"].startswith("mcbot_done:")][0]["parts"][0]["text"]
+    assert "rest is omitted" in text
+    # The frame and the gag add their own text; the report itself is capped.
+    assert text.count("z") == DONE_TEXT_LIMIT
+
+
 async def test_done_for_another_task_leaves_our_slot_alone():
     service, _ = _make_service()
     service._client = _FakeClient(task_id=9)
@@ -534,9 +639,9 @@ def _client_with_transport(handler):
     import httpx
 
 
-    client = McbotClient("http://127.0.0.1:57121", "tok")
+    client = McbotClient("http://127.0.0.1:17897", "tok")
     client._http = httpx.AsyncClient(
-        base_url="http://127.0.0.1:57121",
+        base_url="http://127.0.0.1:17897",
         headers={"Authorization": "Bearer tok"},
         transport=httpx.MockTransport(handler),
     )
@@ -587,7 +692,7 @@ async def test_rest_error_code_is_parsed_from_the_envelope():
 async def test_reset_cursor_clears_the_last_event_id():
     """Ids restart at 1 per bridge, so a stale cursor must be droppable."""
 
-    client = McbotClient("http://127.0.0.1:57121", "tok")
+    client = McbotClient("http://127.0.0.1:17897", "tok")
     client._last_event_id = "30"
     client.reset_cursor()
     assert client.last_event_id == ""
@@ -815,7 +920,7 @@ def test_error_envelope_carries_no_transport_detail(exc):
     text = json.dumps(envelope, ensure_ascii=False)
     # Tool results persist in the conversation transcript, so a host, a port or
     # an endpoint path must never appear in them.
-    for leak in ("127.0.0.1", "57121", "/v1/", "POST", "ConnectError", "timed out"):
+    for leak in ("127.0.0.1", "17897", "/v1/", "POST", "ConnectError", "timed out"):
         assert leak not in text
     assert envelope["is_error"] is True
     assert envelope["output"]["error"]

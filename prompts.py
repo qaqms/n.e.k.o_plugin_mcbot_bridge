@@ -143,6 +143,20 @@ PROMPTS: Dict[str, Dict[str, str]] = {
         "es": "[Terminé{identity}] {text}\nYa me detuve. Cuéntale a {{MASTER_NAME}} cómo fue con tus palabras; no leas esto literalmente.\n{internal_gag}",
         "pt": "[Terminei{identity}] {text}\nJá parei. Conte a {{MASTER_NAME}} como foi, com suas palavras; não leia isso ao pé da letra.\n{internal_gag}",
     },
+    # -- command receipt: mcbot answers 恢复目标/目标状态/放弃目标 as commands --
+    # Its AgentRunner reports COMPLETED for all three, but BRIDGE.md is explicit
+    # that a command's completed only means "accepted". Framing any of them as
+    # "I finished" tells the owner a goal is satisfied when it is not.
+    "CUE_COMMAND_RECEIPT": {
+        "zh": "[命令回执{identity}] {text}\n这不是任务完成，只是命令「{command}」的受理或查询回执。按回执的原意用自己的话告诉 {{MASTER_NAME}}，别说成「做好了」，也别说成「我停下来了」。\n{internal_gag}",
+        "zh-TW": "[指令回執{identity}] {text}\n這不是任務完成，只是指令「{command}」的受理或查詢回執。照回執的原意用自己的話告訴 {{MASTER_NAME}}，別說成「做好了」，也別說成「我停下來了」。\n{internal_gag}",
+        "en": "[Command receipt{identity}] {text}\nThis is not a finished task — it is only the receipt for the command \"{command}\". Relay what it actually says to {{MASTER_NAME}} in your own words; don't say you finished, and don't say you stopped.\n{internal_gag}",
+        "ja": "[コマンドの控え{identity}] {text}\nこれは作業の完了ではなく、コマンド「{command}」の受領・照会の控え。控えの内容を自分の言葉で {{MASTER_NAME}} に伝えて。「終わった」とも「手を止めた」とも言わないで。\n{internal_gag}",
+        "ko": "[명령 접수증{identity}] {text}\n이건 작업 완료가 아니라 명령 \"{command}\" 의 접수·조회 결과야. 내용을 네 말로 {{MASTER_NAME}} 에게 전해. \"다 했어\"라거나 \"멈췄어\"라고 말하지 마.\n{internal_gag}",
+        "ru": "[Квитанция по команде{identity}] {text}\nЭто не завершение работы, а лишь квитанция по команде «{command}». Передай {{MASTER_NAME}} её смысл своими словами; не говори, что закончила, и не говори, что остановилась.\n{internal_gag}",
+        "es": "[Recibo de la orden{identity}] {text}\nEsto no es una tarea terminada: es solo el recibo de la orden «{command}». Cuéntale a {{MASTER_NAME}} lo que dice, con tus palabras; no digas que terminaste ni que te detuviste.\n{internal_gag}",
+        "pt": "[Recibo do comando{identity}] {text}\nIsto não é uma tarefa concluída — é só o recibo do comando «{command}». Repasse a {{MASTER_NAME}} o que ele diz, com suas palavras; não diga que terminei nem que parei.\n{internal_gag}",
+    },
     # -- done with a non-completed status --------------------------------------
     "CUE_DONE_FAILED": {
         "zh": "[我这边没做成{identity}] {text}\n（状态：{status}）我停下来了。如实告诉 {{MASTER_NAME}} 没成，别包装成做好了。\n{internal_gag}",
@@ -478,6 +492,19 @@ PROMPTS: Dict[str, Dict[str, str]] = {
     # reconnection. Each maps a McbotBridgeError code to something she can
     # say in-world.
     # =======================================================================
+    # -- done report clipped before it reaches the model -----------------------
+    # The cue is the *only* channel for a done report (the tool call returns an
+    # empty envelope), so a hard cut is a silent loss of the tail. Say so.
+    "DONE_TEXT_TRUNCATED": {
+        "zh": "\n…（回执太长，后半段已省略）",
+        "zh-TW": "\n…（回執太長，後半段已省略）",
+        "en": "\n... (the report was too long; the rest is omitted)",
+        "ja": "\n…（控えが長すぎるため、後半は省略）",
+        "ko": "\n…(접수 내용이 너무 길어 뒷부분은 생략)",
+        "ru": "\n… (отчёт слишком длинный; остальное опущено)",
+        "es": "\n… (el informe era demasiado largo; se omite el resto)",
+        "pt": "\n… (o relatório era longo demais; o restante foi omitido)",
+    },
     "ERR_UNREACHABLE": {
         "zh": "现在找不到同伴——她的世界还没开，或者刚断开。",
         "zh-TW": "現在找不到同伴——她的世界還沒開，或者剛斷開。",

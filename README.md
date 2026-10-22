@@ -16,7 +16,7 @@ mcbot 出于安全考虑只在**回环地址**上开桥，而且**只在 Minecra
 
 | 面 | 端点 | 说明 |
 |---|---|---|
-| REST | `POST /v1/task` `{text, wait_s}` | → `{task_id, done, status?, fragments[]}`；`wait_s=0` 立刻返回 |
+| REST | `POST /v1/task` `{text, wait_s}` | → `{task_id, done, status?, fragments[]}`；`wait_s` 为**整数**，`0` 立刻返回 |
 | | `POST /v1/task/{id}/cancel` | → `{ok}`；**id=0 表示取消全部** |
 | | `POST /v1/ask` `{text}` | 同步问答，135s 后才放弃（504 ANSWER_TIMEOUT） |
 | | `POST /v1/answer` `{question_id, text}` | → `{ok}`；未知/过期 id → 404 NOT_FOUND |
@@ -43,6 +43,13 @@ mcbot 出于安全考虑只在**回环地址**上开桥，而且**只在 Minecra
 - **`done.status` 只有 `completed` 算成功**。`failed` 报失败；`cancelled` / `superseded`
   是"被有意停掉/取代"，**不产生任何播报**（模型自己知道，播了只会引发重投风暴——
   与 `game_agent_minecraft` 踩过的同一个坑）。
+- **命令类指令的 `completed` 不是"做完了"**。mcbot 把 `恢复目标` / `目标状态` / `放弃目标`
+  当命令处理，三者都以 `completed` 收尾，但按 `mcbot/docs/BRIDGE.md`，命令的 `completed`
+  **只表示受理**：`恢复目标` 之后真正的执行在新 `task_id` 上继续，`目标状态` 则根本不动世界。
+  所以连接器按**派发时的指令原文**识别这三条，走 `CUE_COMMAND_RECEIPT`（"这是回执"），
+  不套"我这边做完了 / 我已经停下来了"的框架。
+- **`done` 的正文只有 cue 一条通道**（工具调用本身返回空壳），因此完成报告不再截到 600 字；
+  只在超过 `DONE_TEXT_LIMIT`（4000）时截断并显式标注"后半段省略"。
 - 桥在**提交任务前**就先取了事件游标，所以一个极快的 `done` 可能在 `POST` 返回之前
   就到达 SSE。这类帧先**暂存**，等拿到 `task_id` 再归组，避免归错任务。
 - SSE 游标**只在整帧处理成功后前移**；处理失败则留在原处，靠重连补发而不是丢帧。
@@ -75,6 +82,7 @@ mcbot 出于安全考虑只在**回环地址**上开桥，而且**只在 Minecra
 | `progress` 工具回执 `ok=false` | 中途失败 | `read` | `[]` | 4 | `mcbot_progress` |
 | `progress` 护栏 / 长活中间帧 | 不给模型 | `blind` | `[]` | 4 | `mcbot_progress` |
 | `done` | 终局 | `respond` | `[]` | 7 | `mcbot_completion` |
+| `done`（命令类：恢复/状态/放弃目标，`completed` 只是受理） | 回执 | `respond` | `[]` | 7 | `mcbot_completion` |
 | `question` | 反问 | `respond` | `[]` | 8 | `mcbot_question` |
 | `state` task_id=0（同伴会话事件） | 触发探针 | `read` | `[]` | 4 | `mcbot_state` |
 | `state` 「主人已回答」 | 答案闭环 | `read` | `[]` | 4 | `mcbot_state` |
@@ -151,7 +159,7 @@ mcbot 出于安全考虑只在**回环地址**上开桥，而且**只在 Minecra
 
 | 键 | 默认 | 说明 |
 |---|---|---|
-| `base_url` | `http://127.0.0.1:57121` | 桥的地址 |
+| `base_url` | `http://127.0.0.1:17897` | 桥的地址 |
 | `game_dir` | `""` | Minecraft 游戏目录，用来定位 `bridge.token`；留空用平台默认 |
 | `token_file` | `""` | 直接指定 token 文件；填了就不看 `game_dir` |
 | `reconnect_interval_seconds` | `5.0` | 事件流断开后的重连间隔 |

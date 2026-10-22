@@ -37,7 +37,7 @@ permissions = ["state:read", "action:call"]
 
 [mcbot]
 # mcbot 的本地桥（仅在 Minecraft 客户端进入世界时监听）。
-base_url = "http://127.0.0.1:57121"
+base_url = "http://127.0.0.1:17897"
 
 # Minecraft 游戏目录，用于定位 bridge.token。留空则尝试平台默认位置
 # （Windows: %APPDATA%/.minecraft）。

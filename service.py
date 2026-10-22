@@ -35,7 +35,7 @@ from .client import (
     SseFrame,
 )
 
-DEFAULT_BASE_URL = "http://127.0.0.1:57121"
+DEFAULT_BASE_URL = "http://127.0.0.1:17897"
 
 # Bridge contract this plugin is written against. The bridge advertises it on
 # status and on every event; anything else is a legacy-compatible bridge, not a
@@ -51,6 +51,18 @@ TASK_STATUSES_TERMINAL = ("completed", "failed", "cancelled", "superseded")
 # on purpose, and the LLM already knows. Matches the sibling plugin's
 # [NO-SWITCH-CUE] decision — cue'ing them just triggers a retry storm.
 TASK_STATUSES_SILENT = ("cancelled", "superseded")
+
+# mcbot answers these three as *commands*, not as work. `AgentRunner` matches
+# them literally and reports COMPLETED for all of them, but `BRIDGE.md` is
+# explicit that a command's `completed` only means "accepted": `恢复目标` starts
+# the real run under a *new* task_id, and `目标状态` performs no work at all.
+# Narrating any of them as "I finished" tells the owner a goal is satisfied.
+COMMAND_DIRECTIVES = ("恢复目标", "目标状态", "放弃目标")
+
+# Safety cap on a done report before it reaches the model. The cue is the only
+# channel for the outcome — the tool call itself returns an empty envelope — so
+# this sits far above a normal report and only guards against a runaway one.
+DONE_TEXT_LIMIT = 4000
 
 # Minimum age before an overwrite is honored. Mirrors the sibling plugin's
 # anti-thrash floor: without it, a model that re-dispatches in the same breath
@@ -284,6 +296,11 @@ class McbotService:
         self._seen_frames_order: deque[tuple] = deque()
         self._finished_tasks: set[str] = set()
         self._finished_order: deque[str] = deque()
+        # task_id -> the directive we dispatched, so a `done` can be framed by
+        # what was asked. Only the command directives below need it; ordinary
+        # work never consults this map.
+        self._task_directives: Dict[int, str] = {}
+        self._task_directive_order: deque[int] = deque()
         self._last_progress_at = 0.0
         self._last_state_at = 0.0
         self._last_event_at = 0.0
@@ -792,7 +809,7 @@ class McbotService:
                 "error": "BRIDGE_NOT_STARTED",
             }
         try:
-            payload = await client.post_task(pending.text, wait_s=0.0)
+            payload = await client.post_task(pending.text, wait_s=0)
         except McbotBridgeError as exc:
             await self._release(pending)
             return self.error_envelope(exc, query=pending.text)
@@ -800,6 +817,7 @@ class McbotService:
         task_id = payload.get("task_id")
         if isinstance(task_id, int) and not isinstance(task_id, bool):
             pending.task_id = task_id
+            self._remember_directive(task_id, pending.text)
         # The id is known now, so frames that arrived mid-POST can be
         # attributed. Replay before checking the window result below.
         pending.awaiting_id = False
@@ -934,6 +952,32 @@ class McbotService:
             return
         await self._apply_done(payload)
 
+    def _remember_directive(self, task_id: int, text: str) -> None:
+        """Remember what we asked for, so a done can be framed by it.
+
+        Bounded like the other seen-sets: a long session must not grow this
+        without limit, and a forgotten directive only costs the generic cue.
+        """
+        if task_id in self._task_directives:
+            return
+        self._task_directives[task_id] = text
+        self._task_directive_order.append(task_id)
+        while len(self._task_directive_order) > _SEEN_FRAME_LIMIT:
+            self._task_directives.pop(self._task_directive_order.popleft(), None)
+
+    def _command_by_task(self, task_id: Any) -> str:
+        """The command word when this task was one of the command directives."""
+        if not isinstance(task_id, int) or isinstance(task_id, bool):
+            return ""
+        directive = self._task_directives.get(task_id, "").strip()
+        return directive if directive in COMMAND_DIRECTIVES else ""
+
+    def _clip_done_text(self, text: str) -> str:
+        """Bound a done report, saying so when the tail is dropped."""
+        if len(text) <= DONE_TEXT_LIMIT:
+            return text
+        return text[:DONE_TEXT_LIMIT] + prompts.t("DONE_TEXT_TRUNCATED", lang=self._lang)
+
     async def _apply_done(self, payload: Dict[str, Any]) -> None:
         """Release the matching slot and narrate the outcome.
 
@@ -977,13 +1021,23 @@ class McbotService:
             return
         if not text:
             return
+        # A command directive reports `completed` when it is merely *accepted*
+        # (`BRIDGE.md`): 恢复目标 then runs under a new task id, and 目标状态
+        # does no work. "I finished" would be a lie in both cases.
+        command = self._command_by_task(task_id) if status == TASK_STATUS_COMPLETED else ""
+        key = (
+            "CUE_COMMAND_RECEIPT"
+            if command
+            else "CUE_DONE" if status == TASK_STATUS_COMPLETED else "CUE_DONE_FAILED"
+        )
         self._push_cue(
-            "CUE_DONE" if status == TASK_STATUS_COMPLETED else "CUE_DONE_FAILED",
+            key,
             ai_behavior="respond",
             priority=PRIORITY_COMPLETION,
             coalesce_key=self._event_key("done", task_id if finished_key else "unknown"),
-            text=text[:600],
+            text=self._clip_done_text(text),
             status=status,
+            command=command,
         )
 
     async def _resolve_pending(

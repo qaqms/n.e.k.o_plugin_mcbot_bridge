@@ -75,7 +75,7 @@ class McbotUnreachable(McbotBridgeError):
     """Could not open a connection — the bridge is down or not listening.
 
     Expected and routine rather than an error condition: mcbot only serves
-    ``127.0.0.1:57121`` while its client is actually in a world.
+    ``127.0.0.1:17897`` while its client is actually in a world.
     """
 
     def __init__(self, message: str = "mcbot bridge is not reachable") -> None:
@@ -222,8 +222,14 @@ class McbotClient:
     # REST
     # ------------------------------------------------------------------
 
-    async def post_task(self, text: str, *, wait_s: float = 0.0) -> Dict[str, Any]:
-        """Dispatch a task. ``wait_s=0`` returns as soon as mcbot queues it."""
+    async def post_task(self, text: str, *, wait_s: int = 0) -> Dict[str, Any]:
+        """Dispatch a task. ``wait_s=0`` returns as soon as mcbot queues it.
+
+        ``wait_s`` is an **integer** in the contract (``BRIDGE.md``: optional,
+        clamped to 0..120, non-integers rejected). Sending ``0.0`` happens to be
+        accepted today only because the bridge strips trailing zeros before
+        checking the scale; a stricter implementation would answer 400.
+        """
         return await self._request_json(
             "POST", "/v1/task", json_body={"text": text, "wait_s": wait_s}
         )

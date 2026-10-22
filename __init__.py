@@ -2,7 +2,7 @@
 
 Bridges a local `mcbot <https://github.com/qaqms/mcbot>`_ companion (a Fabric
 mod fake-player that runs its own LLM brain) into N.E.K.O. over the mod's
-loopback REST + SSE bridge on ``127.0.0.1:57121``.
+loopback REST + SSE bridge on ``127.0.0.1:17897``.
 
 Where the actions live, and why:
 
