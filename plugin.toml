@@ -26,7 +26,10 @@ auto_start = false
 [plugin.ui]
 enabled = true
 
-[[plugin.ui.guide]]
+# 交互面板用 [[plugin.ui.panel]]，不要用 [[plugin.ui.guide]]。
+# guide / docs 是**只读文档面**：默认只给 state:read，渲染在插件详情页的「指南」标签里。
+# surfaces/mcbot.tsx 会通过 props.api.call 调 mcbot_status / mcbot_stop，它是面板。
+[[plugin.ui.panel]]
 id = "mcbot"
 title = "mcbot 同伴"
 entry = "surfaces/mcbot.tsx"
